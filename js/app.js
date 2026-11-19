@@ -1,7 +1,7 @@
 /* Interfaz de KMZ + ANEXO III Red BT */
 (function () {
   'use strict';
-  const APP_VERSION = '1.7.0';
+  const APP_VERSION = '1.7.1';
   const C = window.Core;
   const $ = id => document.getElementById(id);
   const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -466,12 +466,12 @@
     else {
       h += '<div class="num-box"><b>Revisa la numeración de los apoyos</b>';
       problemas.forEach(g => {
-        const nom = (salidas.some(x => x[0] !== g.cuadro) ? `Cuadro ${g.cuadro} · ` : '') + C.salName(g.salida);
+        const nom = g.seguida ? `Cuadro ${g.cuadro} (numeración seguida entre salidas)` : (salidas.some(x => x[0] !== g.cuadro) ? `Cuadro ${g.cuadro} · ` : '') + C.salName(g.salida);
         const txt = [];
         if (g.faltan.length) txt.push(`falta${g.faltan.length > 1 ? 'n' : ''} el${g.faltan.length > 1 ? ' los' : ''} ${g.faltan.join(', ')} (${g.total} apoyos numerados hasta el ${g.max})`);
         if (g.repetidos.length) txt.push(`número${g.repetidos.length > 1 ? 's' : ''} repetido${g.repetidos.length > 1 ? 's' : ''}: ${g.repetidos.join(', ')} (corrígelo en la tabla)`);
         const prop = g.faltan.length && !g.repetidos.length ? C.propuestaCompactar(m, g.cuadro, g.salida) : [];
-        h += `<div class="num-g">• <b>${nom}</b>: ${txt.join('; ')}.` + (prop.length ? ` <button class="peq" data-compactar="${g.cuadro}|${g.salida}">Quitar huecos (${prop[0].node.apoyo}–${prop[prop.length - 1].node.apoyo} → ${prop[0].nuevo}–${prop[prop.length - 1].nuevo})</button>` : '') + '</div>';
+        h += `<div class="num-g">• <b>${nom}</b>: ${txt.join('; ')}.` + (prop.length ? ` <button class="peq" data-compactar="${g.cuadro}|${g.salida == null ? '' : g.salida}">Quitar huecos (${prop[0].node.apoyo}–${prop[prop.length - 1].node.apoyo} → ${prop[0].nuevo}–${prop[prop.length - 1].nuevo})</button>` : '') + '</div>';
       });
       h += '</div>';
     }
@@ -483,7 +483,7 @@
       <button class="peq" id="btnNumMan">Aplicar</button></div></details>`;
     zona.innerHTML = h; enganchar();
     function enganchar() {
-      zona.querySelectorAll('[data-compactar]').forEach(b => b.onclick = () => { const [c, sa] = b.dataset.compactar.split('|').map(Number); const mm = modeloDesdeTablas(); aplicarRenumeracion(mm, C.propuestaCompactar(mm, c, sa)); });
+      zona.querySelectorAll('[data-compactar]').forEach(b => b.onclick = () => { const [c, sa] = b.dataset.compactar.split('|'); const mm = modeloDesdeTablas(); aplicarRenumeracion(mm, C.propuestaCompactar(mm, +c, sa === '' ? null : +sa)); });
       if ($('btnNumMan')) $('btnNumMan').onclick = () => {
         const [c, sa] = $('nmSal').value.split('|').map(Number), de = +$('nmDe').value, a = +$('nmA').value;
         if (!de || !a) return alert('Pon el número actual y el nuevo.');

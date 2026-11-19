@@ -299,25 +299,47 @@
 
   // ───────────────────────── numeración de apoyos ─────────────────────────
   // Huecos y repetidos por cuadro/salida (los apoyos deberían ir 1, 2, 3… sin saltos)
-  function analizarNumeracion(model) {
-    const grupos = {};
-    model.filas.forEach(r => { if (r.esPT || !isInt(r.apoyo)) return; const k = `${+r.cuadro}|${+r.salida}`; (grupos[k] = grupos[k] || { cuadro: +r.cuadro, salida: +r.salida, nums: [] }).nums.push(+r.apoyo); });
-    return Object.values(grupos).sort((a, b) => a.cuadro - b.cuadro || a.salida - b.salida).map(g => {
-      const set = new Set(g.nums), max = Math.max(...g.nums);
-      const faltan = []; for (let i = 1; i <= max; i++) if (!set.has(i)) faltan.push(i);
-      const rep = [...new Set(g.nums.filter((n, i) => g.nums.indexOf(n) !== i))];
-      return { cuadro: g.cuadro, salida: g.salida, total: g.nums.length, max, faltan, repetidos: rep };
-    }).filter(g => g.faltan.length || g.repetidos.length);
+  // ¿La numeración de un cuadro sigue de una salida a otra (SAL01 1-5, SAL02 6-11…) o empieza en 1 en cada salida?
+  function numeracionSeguida(model, cuadro) {
+    const ns = model.nodes.filter(n => !n.esPT && n.cuadro === cuadro);
+    const sals = [...new Set(ns.map(n => n.salida))];
+    if (sals.length < 2) return false;
+    const salidaDe = new Map(); let cruzan = false;
+    ns.forEach(n => { if (salidaDe.has(n.apoyo) && salidaDe.get(n.apoyo) !== n.salida) cruzan = true; salidaDe.set(n.apoyo, n.salida); });
+    if (cruzan) return false; // el mismo número en dos salidas → cada salida empieza en 1
+    return sals.some(sa => !ns.some(n => n.salida === sa && n.apoyo === 1));
   }
-  // Propuesta para quitar los huecos de una salida: cada apoyo pasa a su posición en orden (1..N)
+  // Huecos y repetidos: por salida, o por cuadro si la numeración sigue entre salidas
+  function analizarNumeracion(model) {
+    const out = [];
+    const cuadros = [...new Set(model.nodes.filter(n => !n.esPT).map(n => n.cuadro))].sort((a, b) => a - b);
+    cuadros.forEach(cu => {
+      const seguida = numeracionSeguida(model, cu);
+      const grupos = {};
+      model.filas.forEach(r => {
+        if (r.esPT || !isInt(r.apoyo) || +r.cuadro !== cu) return;
+        const k = seguida ? 'todo' : String(+r.salida);
+        (grupos[k] = grupos[k] || { cuadro: cu, salida: seguida ? null : +r.salida, seguida, nums: [] }).nums.push(+r.apoyo);
+      });
+      Object.values(grupos).sort((a, b) => (a.salida || 0) - (b.salida || 0)).forEach(g => {
+        const set = new Set(g.nums), max = Math.max(...g.nums);
+        const faltan = []; for (let i = 1; i <= max; i++) if (!set.has(i)) faltan.push(i);
+        const rep = [...new Set(g.nums.filter((n, i) => g.nums.indexOf(n) !== i))];
+        if (faltan.length || rep.length) out.push({ cuadro: g.cuadro, salida: g.salida, seguida: g.seguida, total: g.nums.length, max, faltan, repetidos: rep });
+      });
+    });
+    return out;
+  }
+  // Propuesta para quitar los huecos: cada apoyo pasa a su posición en orden (1..N), en la salida o en todo el cuadro
   function propuestaCompactar(model, cuadro, salida) {
-    const ns = model.nodes.filter(n => !n.esPT && n.cuadro === cuadro && n.salida === salida).sort((a, b) => a.apoyo - b.apoyo);
+    const ns = model.nodes.filter(n => !n.esPT && n.cuadro === cuadro && (salida == null || n.salida === salida)).sort((a, b) => a.apoyo - b.apoyo);
     return ns.map((n, i) => ({ node: n, nuevo: i + 1 })).filter(x => x.nuevo !== x.node.apoyo);
   }
-  // Propuesta manual: el apoyo 'de' pasa a ser 'a' (y, si 'siguientes', los posteriores se desplazan igual)
+  // Propuesta manual: el apoyo 'de' pasa a ser 'a' (y, si 'siguientes', los posteriores se desplazan igual).
+  // Con numeración seguida entre salidas, "los siguientes" son los de todo el cuadro.
   function propuestaCambio(model, cuadro, salida, de, a, siguientes) {
-    const d = a - de;
-    return model.nodes.filter(n => !n.esPT && n.cuadro === cuadro && n.salida === salida && (siguientes ? n.apoyo >= de : n.apoyo === de)).map(n => ({ node: n, nuevo: n.apoyo + d }));
+    const d = a - de, seguida = numeracionSeguida(model, cuadro);
+    return model.nodes.filter(n => !n.esPT && n.cuadro === cuadro && (siguientes ? n.apoyo >= de && (seguida || n.salida === salida) : n.apoyo === de && n.salida === salida)).map(n => ({ node: n, nuevo: n.apoyo + d }));
   }
   // Aplica la renumeración a los textos de las tablas. Devuelve los textos nuevos y el mapa de códigos viejo → nuevo.
   function renumerar(model, mainText, defText, cambios) {
@@ -332,7 +354,13 @@
       if (dup.length) errores.push(`En ${salName(sa)} quedarían repetidos los números ${[...new Set(dup)].join(', ')}.`);
       if (finales.some(x => x < 1)) errores.push(`En ${salName(sa)} quedaría algún número de apoyo menor que 1.`);
     });
-    if (errores.length) return { errores };
+    [...new Set(cambios.map(c => c.node.cuadro))].forEach(cu => {
+      if (!numeracionSeguida(model, cu)) return;
+      const finales = model.nodes.filter(n => !n.esPT && n.cuadro === cu).map(n => nuevoDe.has(n) ? nuevoDe.get(n) : n.apoyo);
+      const dup = finales.filter((x, i) => finales.indexOf(x) !== i);
+      if (dup.length) errores.push(`La numeración sigue entre salidas y quedarían repetidos los números ${[...new Set(dup)].join(', ')}.`);
+    });
+    if (errores.length) return { errores: [...new Set(errores)] };
     const mapa = {};
     cambios.forEach(c => { const n = c.node; mapa[n.code] = model.ct + pad2(n.cuadro) + pad2(n.salida) + pad2(c.nuevo); });
     const claves = Object.keys(mapa).sort((a, b) => b.length - a.length);
@@ -971,7 +999,7 @@
     return { avisos, nFotos: imgs.length };
   }
 
-  const api = { SECCIONES, filasSecciones, editarTabla, normSeccion, analizarNumeracion, propuestaCompactar, propuestaCambio, renumerar, haversine, parseCoords, splitTable, parseMain, parseDefects, buildModel, asociarFotos, buildKml, leyendaFilas, distancias,
+  const api = { numeracionSeguida, SECCIONES, filasSecciones, editarTabla, normSeccion, analizarNumeracion, propuestaCompactar, propuestaCambio, renumerar, haversine, parseCoords, splitTable, parseMain, parseDefects, buildModel, asociarFotos, buildKml, leyendaFilas, distancias,
     parseKml, buildAnexo, anexoSheetXml, anexoWorkbookXml, anexoRichData, anexoContentTypes, anexoWorkbookRels, GRAVEDAD_DEFECTO, generarAnexoXlsx, normTipo, claseTipo, tieneCGP, salHex, salName, fmtMiles, pad2, upperEs, excelSerialToDate };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Core = api;
 })(typeof window !== 'undefined' ? window : globalThis);
