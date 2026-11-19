@@ -502,9 +502,48 @@
     const raiz = t => { while (padre.get(t) !== t) t = padre.get(t); return t; };
     const porNodo = new Map();
     conComp.forEach(t => [t.a, t.b].forEach(n => { if (porNodo.has(n)) padre.set(raiz(t), raiz(porNodo.get(n))); else porNodo.set(n, t); }));
-    const salidas = new Map();
-    conComp.forEach(t => { const r = raiz(t); if (!salidas.has(r)) salidas.set(r, new Set()); const S = salidas.get(r); S.add(t.salida); model.compartidos.filter(c => c.tramo === t).forEach(c => S.add(c.salida)); });
-    model._carriles = t => { if (!padre.has(t)) return null; return [...salidas.get(raiz(t))].sort((a, b) => a - b); };
+    const salidas = new Map(), tramosGrupo = new Map();
+    conComp.forEach(t => {
+      const r = raiz(t); if (!salidas.has(r)) { salidas.set(r, new Set()); tramosGrupo.set(r, []); }
+      const S = salidas.get(r); S.add(t.salida); tramosGrupo.get(r).push(t);
+      model.compartidos.filter(c => c.tramo === t).forEach(c => S.add(c.salida));
+    });
+    // Orden de los carriles: por número de salida, pero las que se desvían a la izquierda van a la izquierda
+    // (la que se desvía antes, más por fuera) y las que se desvían a la derecha, a la derecha. Así no se cruzan.
+    const vec = (p, q) => ({ x: (q.lon - p.lon) * Math.cos(p.lat * Math.PI / 180), y: q.lat - p.lat });
+    const prof = n => { let k = 0, x = n; const pad = new Map(model.tramos.filter(t => t.dist != null).map(t => [t.b, t])); while (x && pad.has(x) && k < 5000) { x = pad.get(x).a; k++; } return k; };
+    const lineasDe = sal => {
+      const L = [];
+      model.tramos.forEach(t => { if (t.dist != null && t.salida === sal) L.push({ a: t.a, b: t.b, t }); });
+      model.compartidos.forEach(c => { if (c.salida === sal) L.push({ a: c.tramo.a, b: c.tramo.b, t: c.tramo }); });
+      (model.adicionales || []).forEach(x => { if (x.salida === sal) L.push({ a: x.a, b: x.b, t: null }); });
+      return L;
+    };
+    const ordenes = new Map();
+    salidas.forEach((S, r) => {
+      const enGrupo = new Set(tramosGrupo.get(r));
+      const info = [...S].map(sal => {
+        const L = lineasDe(sal), dentro = L.filter(l => l.t && enGrupo.has(l.t)), fuera = L.filter(l => !l.t || !enGrupo.has(l.t));
+        const nodosDentro = new Set(); dentro.forEach(l => { nodosDentro.add(l.a); nodosDentro.add(l.b); });
+        let lado = 0, donde = Infinity;
+        fuera.forEach(l => {
+          const X = nodosDentro.has(l.a) ? l.a : (nodosDentro.has(l.b) ? l.b : null); if (!X || !X.coords) return;
+          const Y = X === l.a ? l.b : l.a; if (!Y || !Y.coords) return;
+          const entra = dentro.find(d => d.b === X) || dentro.find(d => d.a === X); if (!entra || !entra.a.coords || !entra.b.coords) return;
+          const [p, q] = entra.b === X ? [entra.a, entra.b] : [entra.b, entra.a];
+          const u = vec(p.coords, q.coords), v = vec(X.coords, Y.coords);
+          const cruz = u.x * v.y - u.y * v.x, ang = Math.atan2(cruz, u.x * v.x + u.y * v.y) * 180 / Math.PI;
+          if (Math.abs(ang) < 20) return; // sigue recto
+          const d = prof(X); if (d < donde) { donde = d; lado = ang > 0 ? -1 : 1; } // -1 izquierda, +1 derecha
+        });
+        return { sal, lado, donde };
+      });
+      const izq = info.filter(i => i.lado < 0).sort((a, b) => a.donde - b.donde || a.sal - b.sal);
+      const cen = info.filter(i => i.lado === 0).sort((a, b) => a.sal - b.sal);
+      const der = info.filter(i => i.lado > 0).sort((a, b) => b.donde - a.donde || a.sal - b.sal);
+      ordenes.set(r, izq.concat(cen, der).map(i => i.sal));
+    });
+    model._carriles = t => { if (!padre.has(t)) return null; return ordenes.get(raiz(t)); };
     return model._carriles;
   }
   function posicionEnTramo(model, t, sal) {
