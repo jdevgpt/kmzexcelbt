@@ -486,7 +486,13 @@
     const ox = -dy / L * metros, oy = dx / L * metros;
     return [{ lat: a.lat + oy / mLat, lon: a.lon + ox / mLon }, { lat: b.lat + oy / mLat, lon: b.lon + ox / mLon }];
   }
-  const SEP_COMPARTIDO = 2; // metros entre líneas paralelas
+  // Separación de líneas que van por el mismo tramo: la de la tabla va por el eje y las demás a los lados,
+  // alternando (+, −, +2, −2…). Con 2 líneas, 1,5 m; con más, se juntan para que el haz no pase de 3 m, sin solaparse.
+  function desplazamiento(orden, totalLineas) {
+    const s = totalLineas <= 3 ? 1.5 : 3 / (totalLineas - 1);
+    const paso = Math.ceil(orden / 2);
+    return (orden % 2 ? 1 : -1) * paso * s;
+  }
 
   // ───────────────────────── fotografías ─────────────────────────
   // Asocia cada fichero a apoyo / CGP / defecto según su nombre.
@@ -642,7 +648,8 @@
     Object.keys(grupos).sort((a, b) => grupos[a].c - grupos[b].c || grupos[a].s - grupos[b].s).forEach(g => {
       k += `\t\t<Folder>\n\t\t\t<name>${g}</name>\n`;
       grupos[g].t.forEach(t => {
-        const cs = t.compartido ? paralela(t.a.coords, t.b.coords, SEP_COMPARTIDO * t.compartido.orden) : [t.a.coords, t.b.coords];
+        const nLineas = t.compartido ? 1 + model.compartidos.filter(c => c.tramo === t.compartido.tramo).length : 1;
+        const cs = t.compartido ? paralela(t.a.coords, t.b.coords, desplazamiento(t.compartido.orden, nLineas)) : [t.a.coords, t.b.coords];
         const nom = `${t.a.code} → ${t.b.code}` + (t.compartido ? ` (compartido con ${salName(t.compartido.tramo.salida)})` : t.adicional ? ` (recorrido ${salName(t.salida)})` : '');
         k += `\t\t\t<Placemark>\n\t\t\t\t<name>${nom}</name>\n\t\t\t\t<styleUrl>#sSAL${pad2(t.salida)}</styleUrl>\n\t\t\t\t<LineString>\n\t\t\t\t\t<tessellate>1</tessellate>\n\t\t\t\t\t<coordinates>\n\t\t\t\t\t\t${coordStr(cs[0])} ${coordStr(cs[1])} \n\t\t\t\t\t</coordinates>\n\t\t\t\t</LineString>\n\t\t\t</Placemark>\n`;
       });
