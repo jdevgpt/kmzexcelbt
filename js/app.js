@@ -1,7 +1,7 @@
 /* Interfaz de KMZ + ANEXO III Red BT */
 (function () {
   'use strict';
-  const APP_VERSION = '1.3.1';
+  const APP_VERSION = '1.3.2';
   const C = window.Core;
   const $ = id => document.getElementById(id);
   const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -333,7 +333,7 @@
   });
 
   // ───────── PWA y aviso de versión nueva ─────────
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {});
   async function comprobarVersion() {
     try {
       const r = await fetch('version.json?t=' + Date.now(), { cache: 'no-store' });
@@ -342,9 +342,22 @@
     } catch (e) { /* sin conexión */ }
   }
   $('btnActualizar').addEventListener('click', async () => {
-    try { const ks = await caches.keys(); await Promise.all(ks.map(k => caches.delete(k))); const regs = await navigator.serviceWorker.getRegistrations(); await Promise.all(regs.map(r => r.update())); } catch (e) {}
-    location.reload();
+    const b = $('btnActualizar'); b.disabled = true; b.textContent = 'Actualizando…';
+    try {
+      // 1) descargar de nuevo los archivos de la app saltándose la caché del navegador
+      const archivos = ['./', 'index.html', 'js/app.js', 'js/core.js', 'js/template.js', 'vendor/jszip.min.js', 'sw.js', 'manifest.webmanifest'];
+      await Promise.all(archivos.map(u => fetch(u, { cache: 'reload' }).catch(() => {})));
+      // 2) borrar la copia sin conexión y actualizar el service worker
+      const ks = await caches.keys(); await Promise.all(ks.map(k => caches.delete(k)));
+      if ('serviceWorker' in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map(r => r.update().catch(() => {})));
+      }
+    } catch (e) {}
+    // 3) recargar pidiendo la página nueva
+    location.replace(location.pathname + '?v=' + Date.now());
   });
+  if (/[?&]v=\d+/.test(location.search)) history.replaceState(null, '', location.pathname);
   comprobarVersion(); setInterval(comprobarVersion, 30 * 60 * 1000);
   window.__APP_VERSION = APP_VERSION;
 })();
