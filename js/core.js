@@ -103,7 +103,7 @@
       out.push({
         n: out.length, linea: i + 1, fecha, ct: g(1), cuadro: g(2), salida: g(3), apoyo: g(4), tipo: g(5),
         inicio: g(6), fin: g(7), seccion: g(8), dist: g(9), obs: g(10), cod: g(11), defecto: g(12),
-        mapaTxt: g(13), mapa: parseCoords(g(13))
+        mapaTxt: g(13), mapa: parseCoords(g(13)), raw, off, idxRaw: i
       });
     });
     return { filas: out, avisos };
@@ -260,11 +260,79 @@
       d.node.defectos.push(d);
     });
 
-    const model = { ct, pt, nodes, byKey, filas, tramos, defectos: defs, avisos, notas, opts, compartidos: [] };
+    const model = { ct, pt, nodes, byKey, filas, tramos, defectos: defs, avisos, notas, opts, compartidos: [], findNode };
     aplicarCompartidos(model, opts.compartidos || '');
     return model;
   }
 
+
+
+  // ───────────────────────── numeración de apoyos ─────────────────────────
+  // Huecos y repetidos por cuadro/salida (los apoyos deberían ir 1, 2, 3… sin saltos)
+  function analizarNumeracion(model) {
+    const grupos = {};
+    model.filas.forEach(r => { if (r.esPT || !isInt(r.apoyo)) return; const k = `${+r.cuadro}|${+r.salida}`; (grupos[k] = grupos[k] || { cuadro: +r.cuadro, salida: +r.salida, nums: [] }).nums.push(+r.apoyo); });
+    return Object.values(grupos).sort((a, b) => a.cuadro - b.cuadro || a.salida - b.salida).map(g => {
+      const set = new Set(g.nums), max = Math.max(...g.nums);
+      const faltan = []; for (let i = 1; i <= max; i++) if (!set.has(i)) faltan.push(i);
+      const rep = [...new Set(g.nums.filter((n, i) => g.nums.indexOf(n) !== i))];
+      return { cuadro: g.cuadro, salida: g.salida, total: g.nums.length, max, faltan, repetidos: rep };
+    }).filter(g => g.faltan.length || g.repetidos.length);
+  }
+  // Propuesta para quitar los huecos de una salida: cada apoyo pasa a su posición en orden (1..N)
+  function propuestaCompactar(model, cuadro, salida) {
+    const ns = model.nodes.filter(n => !n.esPT && n.cuadro === cuadro && n.salida === salida).sort((a, b) => a.apoyo - b.apoyo);
+    return ns.map((n, i) => ({ node: n, nuevo: i + 1 })).filter(x => x.nuevo !== x.node.apoyo);
+  }
+  // Propuesta manual: el apoyo 'de' pasa a ser 'a' (y, si 'siguientes', los posteriores se desplazan igual)
+  function propuestaCambio(model, cuadro, salida, de, a, siguientes) {
+    const d = a - de;
+    return model.nodes.filter(n => !n.esPT && n.cuadro === cuadro && n.salida === salida && (siguientes ? n.apoyo >= de : n.apoyo === de)).map(n => ({ node: n, nuevo: n.apoyo + d }));
+  }
+  // Aplica la renumeración a los textos de las tablas. Devuelve los textos nuevos y el mapa de códigos viejo → nuevo.
+  function renumerar(model, mainText, defText, cambios) {
+    const nuevoDe = new Map(cambios.map(c => [c.node, c.nuevo]));
+    // comprobación de choques en cada salida
+    const errores = [];
+    const grupos = new Set(cambios.map(c => `${c.node.cuadro}|${c.node.salida}`));
+    grupos.forEach(g => {
+      const [cu, sa] = g.split('|').map(Number);
+      const finales = model.nodes.filter(n => !n.esPT && n.cuadro === cu && n.salida === sa).map(n => nuevoDe.has(n) ? nuevoDe.get(n) : n.apoyo);
+      const dup = finales.filter((x, i) => finales.indexOf(x) !== i);
+      if (dup.length) errores.push(`En ${salName(sa)} quedarían repetidos los números ${[...new Set(dup)].join(', ')}.`);
+      if (finales.some(x => x < 1)) errores.push(`En ${salName(sa)} quedaría algún número de apoyo menor que 1.`);
+    });
+    if (errores.length) return { errores };
+    const mapa = {};
+    cambios.forEach(c => { const n = c.node; mapa[n.code] = model.ct + pad2(n.cuadro) + pad2(n.salida) + pad2(c.nuevo); });
+    const claves = Object.keys(mapa).sort((a, b) => b.length - a.length);
+    const re = claves.length ? new RegExp('(?<!\\d)(' + claves.join('|') + ')(?!\\d)', 'g') : null;
+    const cambiarCodigos = t => re ? String(t).replace(re, m => mapa[m]) : String(t);
+    const sepM = /\t/.test(mainText) ? '\t' : ';', sepD = /\t/.test(defText) ? '\t' : ';';
+    const tramoDe = new Map(model.tramos.map(t => [t.row, t]));
+    const lineasM = String(mainText).replace(/\r\n?/g, '\n').split('\n');
+    const tabla = lineasM.filter(l => l.trim() !== '');
+    // índice de línea de texto no vacía → fila del modelo
+    const porIdx = new Map(model.filas.map(r => [r.idxRaw, r]));
+    const nuevasM = tabla.map((l, i) => {
+      const f = l.split(sepM).map(cambiarCodigos);
+      const r = porIdx.get(i);
+      if (r && !r.esPT) {
+        const o = r.off, num = x => String(x);
+        if (nuevoDe.has(r.node) && r === r.node.row) f[o + 4] = num(nuevoDe.get(r.node));
+        const t = tramoDe.get(r);
+        const ref = (tok, node) => { if (!node || node.esPT || !nuevoDe.has(node)) return tok; return trim(tok) === '' ? tok : num(nuevoDe.get(node)); };
+        if (t) { f[o + 6] = ref(f[o + 6], t.a); f[o + 7] = ref(f[o + 7], t.b); }
+        else {
+          const ni = model.findNode(r.inicio, r), nf = model.findNode(r.fin, r);
+          f[o + 6] = ref(f[o + 6], ni); f[o + 7] = ref(f[o + 7], nf);
+        }
+      }
+      return f.join(sepM);
+    });
+    const nuevasD = String(defText || '').replace(/\r\n?/g, '\n').split('\n').map(l => l.split(sepD).map(cambiarCodigos).join(sepD));
+    return { mainText: nuevasM.join('\n'), defText: nuevasD.join('\n'), mapa, cambiarCodigos, errores: [] };
+  }
 
   // ───────────────────────── tramos compartidos entre salidas ─────────────────────────
   // Una línea por indicación: "1-6 SAL02"  ·  "SAL01 1-6 SAL02"  ·  "0-3 SAL02 SAL03"
@@ -835,7 +903,7 @@
     return { avisos, nFotos: imgs.length };
   }
 
-  const api = { haversine, parseCoords, splitTable, parseMain, parseDefects, buildModel, asociarFotos, buildKml, leyendaFilas, distancias,
+  const api = { analizarNumeracion, propuestaCompactar, propuestaCambio, renumerar, haversine, parseCoords, splitTable, parseMain, parseDefects, buildModel, asociarFotos, buildKml, leyendaFilas, distancias,
     parseKml, buildAnexo, anexoSheetXml, anexoWorkbookXml, anexoRichData, anexoContentTypes, anexoWorkbookRels, GRAVEDAD_DEFECTO, generarAnexoXlsx, normTipo, claseTipo, tieneCGP, salHex, salName, fmtMiles, pad2, upperEs, excelSerialToDate };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Core = api;
 })(typeof window !== 'undefined' ? window : globalThis);

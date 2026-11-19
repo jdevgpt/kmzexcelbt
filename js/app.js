@@ -1,7 +1,7 @@
 /* Interfaz de KMZ + ANEXO III Red BT */
 (function () {
   'use strict';
-  const APP_VERSION = '1.4.0';
+  const APP_VERSION = '1.5.0';
   const C = window.Core;
   const $ = id => document.getElementById(id);
   const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -9,7 +9,7 @@
   const estado = { fotos: [], kmzGenerado: null, kmzModificado: null, modelo: null };
 
   // ───────── persistencia de las tablas (solo texto) ─────────
-  const LS = { main: 'kmzexcelbt.main', def: 'kmzexcelbt.def', suf: 'kmzexcelbt.suf1', comp: 'kmzexcelbt.comp' };
+  const LS = { main: 'kmzexcelbt.main', def: 'kmzexcelbt.def', suf: 'kmzexcelbt.suf1', comp: 'kmzexcelbt.comp', orig: 'kmzexcelbt.orig', mapa: 'kmzexcelbt.mapa' };
   const lsGet = k => { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } };
   const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* sin almacenamiento */ } };
   $('txtMain').value = lsGet(LS.main);
@@ -19,7 +19,7 @@
   $('txtComp').addEventListener('input', () => lsSet(LS.comp, $('txtComp').value));
   const infoTabla = (ta, info) => { const n = C.splitTable(ta.value).length; $(info).textContent = n ? n + ' filas' : ''; };
   [['txtMain', 'infoMain', LS.main], ['txtDef', 'infoDef', LS.def]].forEach(([ta, info, k]) => {
-    $(ta).addEventListener('input', () => { lsSet(k, $(ta).value); infoTabla($(ta), info); });
+    $(ta).addEventListener('input', () => { lsSet(k, $(ta).value); infoTabla($(ta), info); clearTimeout(estado.tNum); estado.tNum = setTimeout(pintarNumeracion, 500); });
     infoTabla($(ta), info);
   });
   $('chkSuf1').addEventListener('change', () => lsSet(LS.suf, $('chkSuf1').checked ? '1' : ''));
@@ -66,7 +66,7 @@
   [['fMain', 'txtMain', 'infoMain', LS.main], ['fDef', 'txtDef', 'infoDef', LS.def]].forEach(([fi, ta, info, k]) => {
     $(fi).addEventListener('change', async e => {
       const f = e.target.files[0]; if (!f) return;
-      try { $(ta).value = await leerTabla(f); lsSet(k, $(ta).value); infoTabla($(ta), info); $(info).textContent += ' · ' + f.name; }
+      try { $(ta).value = await leerTabla(f); lsSet(k, $(ta).value); infoTabla($(ta), info); $(info).textContent += ' · ' + f.name; pintarNumeracion(); }
       catch (err) { alert('No se pudo leer ' + f.name + ': ' + err.message); }
       e.target.value = '';
     });
@@ -88,16 +88,17 @@
           const z = await JSZip.loadAsync(f);
           z.forEach((path, entry) => {
             if (entry.dir || /(^|\/)(__MACOSX|\.)/.test(path)) return;
-            if (/\.(jpe?g|png|gif|webp)$/i.test(path)) estado.fotos.push({ nombre: path, leer: () => entry.async('uint8array') });
+            if (/\.(jpe?g|png|gif|webp)$/i.test(path)) estado.fotos.push({ orig: path, nombre: renombrar(path), leer: () => entry.async('uint8array') });
           });
         } catch (e) { alert('No se pudo abrir ' + f.name + ': ' + e.message); }
       } else if (/\.(jpe?g|png|gif|webp)$/i.test(f.name)) {
-        estado.fotos.push({ nombre: f.name, leer: async () => new Uint8Array(await f.arrayBuffer()) });
+        estado.fotos.push({ orig: f.name, nombre: renombrar(f.name), leer: async () => new Uint8Array(await f.arrayBuffer()) });
       }
     }
     pintarFotos();
   }
   function pintarFotos() {
+    if (estado.mapaListo) pintarNumeracion();
     $('infoFotos').textContent = estado.fotos.length ? estado.fotos.length + ' fotos cargadas.' : 'Sin fotos.';
     $('btnQuitarFotos').hidden = !estado.fotos.length;
   }
@@ -114,12 +115,12 @@
     ['fMain', 'fDef', 'fFotos', 'fKmz'].forEach(id => { $(id).value = ''; });
     // memoria de la página
     if (estado.miniaturas) estado.miniaturas.forEach(u => { if (u) URL.revokeObjectURL(u); });
-    estado.miniaturas = new Map(); estado.fotoElegida = {};
+    estado.miniaturas = new Map(); estado.fotoElegida = {}; estado.avisoRegenerar = false;
     estado.fotos = []; estado.kmzGenerado = null; estado.kmzModificado = null; estado.kmzLeido = null; estado.modelo = null; estado.informe = null;
     clearTimeout(estado.tGrav);
     // memoria del navegador (el orden de gravedad es un ajuste y se conserva)
-    [LS.main, LS.def, LS.suf, LS.comp, 'jdev_kmz_informe'].forEach(k => { try { localStorage.removeItem(k); } catch (e) {} });
-    pintarFotos(); actualizarBtnExcel();
+    [LS.main, LS.def, LS.suf, LS.comp, LS.orig, LS.mapa, 'jdev_kmz_informe'].forEach(k => { try { localStorage.removeItem(k); } catch (e) {} });
+    pintarFotos(); actualizarBtnExcel(); pintarNumeracion();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   });
 
@@ -202,7 +203,7 @@
       for (const [full, base] of nombreDe) z.file('files/' + base, await fotoPor.get(full).leer(), { compression: 'STORE' });
       const blob = await z.generateAsync({ type: 'blob', mimeType: 'application/vnd.google-earth.kmz' });
       const nombre = `ANEXO I - ${m.ct}.kmz`;
-      estado.kmzGenerado = { blob, nombre }; estado.modelo = m;
+      estado.kmzGenerado = { blob, nombre }; estado.modelo = m; if (estado.avisoRegenerar) { estado.avisoRegenerar = false; pintarNumeracion(); }
       descargar(blob, nombre);
       $('btnUsarGenerado').hidden = false; actualizarBtnExcel();
       pintarRes1(m, ph, nombre);
@@ -334,6 +335,99 @@
       console.error(e); $('res2').innerHTML = `<div class="res"><div class="err-box">${esc(e.message)}</div></div>`;
     } finally { btn.textContent = 'Generar ANEXO III'; actualizarBtnExcel(); }
   });
+
+
+  // ───────── numeración de apoyos: huecos, repetidos y renumeración ─────────
+  const lsJson = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } };
+  function mapaTotal() { return lsJson(LS.mapa, {}); }
+  function renombrar(nombre) {
+    const m = mapaTotal(), ks = Object.keys(m).sort((a, b) => b.length - a.length);
+    if (!ks.length) return nombre;
+    const re = new RegExp('(?<!\\d)(' + ks.join('|') + ')(?!\\d)', 'g');
+    return String(nombre).replace(re, x => m[x]);
+  }
+  function pintarNumeracion() {
+    const zona = $('numeracion');
+    let m = null;
+    try { if ($('txtMain').value.trim()) m = modeloDesdeTablas(); } catch (e) { m = null; }
+    const mapa = mapaTotal(), nCamb = Object.keys(mapa).filter(k => mapa[k] !== k).length;
+    let h = '';
+    if (nCamb) {
+      h += `<div class="num-box ok" style="margin-bottom:8px">✔ Renumeración aplicada: ${nCamb} apoyo${nCamb === 1 ? '' : 's'} con número nuevo (tabla, defectos y fotos).
+        <button class="sec peq" id="btnDeshacerNum">Deshacer</button> ${estado.fotos.length ? '<button class="sec peq" id="btnZipRen">Descargar fotos renombradas</button>' : ''}
+        ${estado.avisoRegenerar ? '<br><b>Vuelve a generar el KMZ</b>: el que tenías es de antes del cambio.' : ''}</div>`;
+    }
+    if (!m) { zona.innerHTML = h; enganchar(); return; }
+    const problemas = C.analizarNumeracion(m);
+    const salidas = [...new Set(m.nodes.filter(n => !n.esPT).map(n => n.cuadro + '|' + n.salida))].map(k => k.split('|').map(Number));
+    if (!problemas.length) h += `<div class="num-box ok">✔ Numeración de apoyos sin huecos ni repetidos.</div>`;
+    else {
+      h += '<div class="num-box"><b>Revisa la numeración de los apoyos</b>';
+      problemas.forEach(g => {
+        const nom = (salidas.some(x => x[0] !== g.cuadro) ? `Cuadro ${g.cuadro} · ` : '') + C.salName(g.salida);
+        const txt = [];
+        if (g.faltan.length) txt.push(`falta${g.faltan.length > 1 ? 'n' : ''} el${g.faltan.length > 1 ? ' los' : ''} ${g.faltan.join(', ')} (${g.total} apoyos numerados hasta el ${g.max})`);
+        if (g.repetidos.length) txt.push(`número${g.repetidos.length > 1 ? 's' : ''} repetido${g.repetidos.length > 1 ? 's' : ''}: ${g.repetidos.join(', ')} (corrígelo en la tabla)`);
+        const prop = g.faltan.length && !g.repetidos.length ? C.propuestaCompactar(m, g.cuadro, g.salida) : [];
+        h += `<div class="num-g">• <b>${nom}</b>: ${txt.join('; ')}.` + (prop.length ? ` <button class="peq" data-compactar="${g.cuadro}|${g.salida}">Quitar huecos (${prop[0].node.apoyo}–${prop[prop.length - 1].node.apoyo} → ${prop[0].nuevo}–${prop[prop.length - 1].nuevo})</button>` : '') + '</div>';
+      });
+      h += '</div>';
+    }
+    h += `<details style="margin-top:6px"><summary>Cambiar el número de un apoyo a mano</summary><div class="num-man">
+      <label>Salida<select id="nmSal">${salidas.map(([c, sa]) => `<option value="${c}|${sa}">${salidas.some(x => x[0] !== c) ? 'C' + c + ' ' : ''}${C.salName(sa)}</option>`).join('')}</select></label>
+      <label>Apoyo actual<input id="nmDe" type="number" min="1"></label>
+      <label>Número nuevo<input id="nmA" type="number" min="1"></label>
+      <label style="flex-direction:row;align-items:center;gap:6px;width:auto"><input id="nmSig" type="checkbox" style="width:auto"> y los siguientes también</label>
+      <button class="peq" id="btnNumMan">Aplicar</button></div></details>`;
+    zona.innerHTML = h; enganchar();
+    function enganchar() {
+      zona.querySelectorAll('[data-compactar]').forEach(b => b.onclick = () => { const [c, sa] = b.dataset.compactar.split('|').map(Number); const mm = modeloDesdeTablas(); aplicarRenumeracion(mm, C.propuestaCompactar(mm, c, sa)); });
+      if ($('btnNumMan')) $('btnNumMan').onclick = () => {
+        const [c, sa] = $('nmSal').value.split('|').map(Number), de = +$('nmDe').value, a = +$('nmA').value;
+        if (!de || !a) return alert('Pon el número actual y el nuevo.');
+        const mm = modeloDesdeTablas();
+        const prop = C.propuestaCambio(mm, c, sa, de, a, $('nmSig').checked);
+        if (!prop.length) return alert(`No hay ningún apoyo ${de} en esa salida.`);
+        aplicarRenumeracion(mm, prop);
+      };
+      if ($('btnDeshacerNum')) $('btnDeshacerNum').onclick = deshacerRenumeracion;
+      if ($('btnZipRen')) $('btnZipRen').onclick = zipRenombradas;
+    }
+  }
+  function aplicarRenumeracion(m, prop) {
+    const r = C.renumerar(m, $('txtMain').value, $('txtDef').value, prop);
+    if (r.errores.length) return alert('No se puede aplicar:\n' + r.errores.join('\n'));
+    const lista = prop.slice(0, 12).map(x => `${x.node.apoyo}→${x.nuevo}`).join(', ') + (prop.length > 12 ? '…' : '');
+    if (!confirm(`Se van a cambiar ${prop.length} apoyo${prop.length === 1 ? '' : 's'} (${lista}).\n\nSe actualizan los números y los INICIO/FIN de la tabla, los códigos de la tabla de defectos y el nombre de las fotos con el código del apoyo nuevo.\n\n¿Seguir?`)) return;
+    if (!lsGet(LS.orig)) lsSet(LS.orig, JSON.stringify({ main: $('txtMain').value, def: $('txtDef').value }));
+    // componer con lo ya aplicado: original → actual
+    const tot = mapaTotal(), vals = new Set(Object.values(tot));
+    Object.keys(tot).forEach(k => { if (r.mapa[tot[k]]) tot[k] = r.mapa[tot[k]]; });
+    Object.keys(r.mapa).forEach(k => { if (!vals.has(k) && !(k in tot)) tot[k] = r.mapa[k]; });
+    lsSet(LS.mapa, JSON.stringify(tot));
+    $('txtMain').value = r.mainText; $('txtDef').value = r.defText; lsSet(LS.main, r.mainText); lsSet(LS.def, r.defText);
+    infoTabla($('txtMain'), 'infoMain'); infoTabla($('txtDef'), 'infoDef');
+    estado.fotos.forEach(f => { f.nombre = renombrar(f.orig); });
+    estado.fotoElegida = {};
+    if (estado.kmzGenerado) { estado.avisoRegenerar = true; if (estado.kmzModificado === estado.kmzGenerado) estado.kmzModificado = null; estado.kmzGenerado = null; $('btnUsarGenerado').hidden = true; $('res1').innerHTML = ''; actualizarBtnExcel(); }
+    pintarNumeracion();
+  }
+  function deshacerRenumeracion() {
+    const o = lsJson(LS.orig, null); if (!o) return;
+    if (!confirm('¿Volver a la numeración original? Se restauran las tablas y los nombres de las fotos.')) return;
+    $('txtMain').value = o.main; $('txtDef').value = o.def; lsSet(LS.main, o.main); lsSet(LS.def, o.def);
+    try { localStorage.removeItem(LS.orig); localStorage.removeItem(LS.mapa); } catch (e) {}
+    infoTabla($('txtMain'), 'infoMain'); infoTabla($('txtDef'), 'infoDef');
+    estado.fotos.forEach(f => { f.nombre = f.orig; }); estado.fotoElegida = {};
+    pintarNumeracion();
+  }
+  async function zipRenombradas() {
+    const z = new JSZip();
+    for (const f of estado.fotos) z.file(f.nombre, await f.leer(), { compression: 'STORE' });
+    let ct = ''; try { ct = modeloDesdeTablas().ct; } catch (e) {}
+    descargar(await z.generateAsync({ type: 'blob' }), `Fotos renombradas${ct ? ' - ' + ct : ''}.zip`);
+  }
+  pintarNumeracion(); estado.mapaListo = true;
 
   // ───────── PWA y aviso de versión nueva ─────────
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {});
