@@ -486,13 +486,34 @@
     const ox = -dy / L * metros, oy = dx / L * metros;
     return [{ lat: a.lat + oy / mLat, lon: a.lon + ox / mLon }, { lat: b.lat + oy / mLat, lon: b.lon + ox / mLon }];
   }
-  // Separación de líneas que van por el mismo tramo: la de la tabla va por el eje y las demás a los lados,
-  // alternando (+, −, +2, −2…). Con 2 líneas, 1,5 m; con más, se juntan para que el haz no pase de 3 m, sin solaparse.
-  function desplazamiento(orden, totalLineas) {
-    const s = totalLineas <= 3 ? 1.5 : 3 / (totalLineas - 1);
-    const paso = Math.ceil(orden / 2);
-    return (orden % 2 ? 1 : -1) * paso * s;
+  // Líneas que van por el mismo tramo: una al lado de otra en orden de salida (SAL01, SAL02, SAL03…),
+  // centradas sobre el tramo. Con 2 líneas, 1,5 m entre ellas; con más, se juntan para que el haz no pase de 3 m.
+  function desplazamiento(posicion, totalLineas) {
+    if (totalLineas <= 1) return 0;
+    const sep = totalLineas <= 3 ? 1.5 : 3 / (totalLineas - 1);
+    return ((totalLineas - 1) / 2 - posicion) * sep; // positivo = a la izquierda: SAL01 queda a la izquierda mirando desde el PT
   }
+  // Carril de cada salida: en cada tramo de salidas compartidas, las líneas de un mismo recorrido común
+  // (tramos seguidos que comparten apoyos) tienen un carril fijo según su número de salida, para que no salten en los apoyos.
+  function carriles(model) {
+    if (model._carriles) return model._carriles;
+    const conComp = model.tramos.filter(t => model.compartidos.some(c => c.tramo === t));
+    const padre = new Map(conComp.map(t => [t, t]));
+    const raiz = t => { while (padre.get(t) !== t) t = padre.get(t); return t; };
+    const porNodo = new Map();
+    conComp.forEach(t => [t.a, t.b].forEach(n => { if (porNodo.has(n)) padre.set(raiz(t), raiz(porNodo.get(n))); else porNodo.set(n, t); }));
+    const salidas = new Map();
+    conComp.forEach(t => { const r = raiz(t); if (!salidas.has(r)) salidas.set(r, new Set()); const S = salidas.get(r); S.add(t.salida); model.compartidos.filter(c => c.tramo === t).forEach(c => S.add(c.salida)); });
+    model._carriles = t => { if (!padre.has(t)) return null; return [...salidas.get(raiz(t))].sort((a, b) => a - b); };
+    return model._carriles;
+  }
+  function posicionEnTramo(model, t, sal) {
+    const S = carriles(model)(t);
+    if (!S) return { pos: 0, total: 1 };
+    return { pos: S.indexOf(sal), total: S.length };
+  }
+
+
 
   // ───────────────────────── fotografías ─────────────────────────
   // Asocia cada fichero a apoyo / CGP / defecto según su nombre.
@@ -648,8 +669,10 @@
     Object.keys(grupos).sort((a, b) => grupos[a].c - grupos[b].c || grupos[a].s - grupos[b].s).forEach(g => {
       k += `\t\t<Folder>\n\t\t\t<name>${g}</name>\n`;
       grupos[g].t.forEach(t => {
-        const nLineas = t.compartido ? 1 + model.compartidos.filter(c => c.tramo === t.compartido.tramo).length : 1;
-        const cs = t.compartido ? paralela(t.a.coords, t.b.coords, desplazamiento(t.compartido.orden, nLineas)) : [t.a.coords, t.b.coords];
+        const base = t.compartido ? t.compartido.tramo : (t.adicional ? null : t);
+        const pe = base ? posicionEnTramo(model, base, t.salida) : { pos: 0, total: 1 };
+        const off = desplazamiento(pe.pos, pe.total);
+        const cs = off ? paralela(t.a.coords, t.b.coords, off) : [t.a.coords, t.b.coords];
         const nom = `${t.a.code} → ${t.b.code}` + (t.compartido ? ` (compartido con ${salName(t.compartido.tramo.salida)})` : t.adicional ? ` (recorrido ${salName(t.salida)})` : '');
         k += `\t\t\t<Placemark>\n\t\t\t\t<name>${nom}</name>\n\t\t\t\t<styleUrl>#sSAL${pad2(t.salida)}</styleUrl>\n\t\t\t\t<LineString>\n\t\t\t\t\t<tessellate>1</tessellate>\n\t\t\t\t\t<coordinates>\n\t\t\t\t\t\t${coordStr(cs[0])} ${coordStr(cs[1])} \n\t\t\t\t\t</coordinates>\n\t\t\t\t</LineString>\n\t\t\t</Placemark>\n`;
       });
@@ -781,11 +804,12 @@
       const A = pos(t.a), B = pos(t.b); if (!A || !B) return;
       const nombres = [`${t.a.code} → ${t.b.code}`, `${t.b.code} → ${t.a.code}`];
       let L = kd.lineas.findIndex((l, i) => !usadas.has(i) && !/\((compartido|recorrido)/i.test(l.name) && nombres.includes(l.name.replace(/\s*(->|→)\s*/, ' → ')));
-      if (L < 0) L = kd.lineas.findIndex((l, i) => !usadas.has(i) && !/\((compartido|recorrido)/i.test(l.name) && ((near(l.ini, A) && near(l.fin, B)) || (near(l.ini, B) && near(l.fin, A))));
+      if (L < 0) L = kd.lineas.findIndex((l, i) => !usadas.has(i) && !/\((compartido|recorrido)/i.test(l.name) && ((haversine(l.ini, A) < 4 && haversine(l.fin, B) < 4) || (haversine(l.ini, B) < 4 && haversine(l.fin, A) < 4)));
       if (L < 0) avisos.push(`Topología: el tramo ${t.a.name} → ${t.b.name} de la tabla no tiene línea en SALIDAS del KMZ.`);
       else {
         usadas.add(L); const l = kd.lineas[L];
-        const ok = (near(l.ini, A) && near(l.fin, B)) || (near(l.ini, B) && near(l.fin, A));
+        const cerca = (p, q) => haversine(p, q) < 4; // las líneas de tramos compartidos van desplazadas hasta 1,5 m
+        const ok = (cerca(l.ini, A) && cerca(l.fin, B)) || (cerca(l.ini, B) && cerca(l.fin, A));
         if (!ok) resumen.push(`La línea ${t.a.name} → ${t.b.name} no llega exactamente a la posición de los apoyos en el KMZ (¿apoyo movido sin mover la línea?). DIST. se calcula entre apoyos.`);
       }
     });
