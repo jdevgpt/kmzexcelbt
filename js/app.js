@@ -1,7 +1,7 @@
 /* Interfaz de KMZ + ANEXO III Red BT */
 (function () {
   'use strict';
-  const APP_VERSION = '1.5.0';
+  const APP_VERSION = '1.6.0';
   const C = window.Core;
   const $ = id => document.getElementById(id);
   const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -16,10 +16,10 @@
   $('txtDef').value = lsGet(LS.def);
   $('chkSuf1').checked = lsGet(LS.suf) === '1';
   $('txtComp').value = lsGet(LS.comp);
-  $('txtComp').addEventListener('input', () => lsSet(LS.comp, $('txtComp').value));
+  $('txtComp').addEventListener('input', () => { lsSet(LS.comp, $('txtComp').value); clearTimeout(estado.tComp); estado.tComp = setTimeout(() => pintarSecciones(), 600); });
   const infoTabla = (ta, info) => { const n = C.splitTable(ta.value).length; $(info).textContent = n ? n + ' filas' : ''; };
   [['txtMain', 'infoMain', LS.main], ['txtDef', 'infoDef', LS.def]].forEach(([ta, info, k]) => {
-    $(ta).addEventListener('input', () => { lsSet(k, $(ta).value); infoTabla($(ta), info); clearTimeout(estado.tNum); estado.tNum = setTimeout(pintarNumeracion, 500); });
+    $(ta).addEventListener('input', () => { lsSet(k, $(ta).value); infoTabla($(ta), info); clearTimeout(estado.tNum); estado.tNum = setTimeout(() => { pintarNumeracion(); pintarSecciones(); }, 500); });
     infoTabla($(ta), info);
   });
   $('chkSuf1').addEventListener('change', () => lsSet(LS.suf, $('chkSuf1').checked ? '1' : ''));
@@ -120,7 +120,7 @@
     clearTimeout(estado.tGrav);
     // memoria del navegador (el orden de gravedad es un ajuste y se conserva)
     [LS.main, LS.def, LS.suf, LS.comp, LS.orig, LS.mapa, 'jdev_kmz_informe'].forEach(k => { try { localStorage.removeItem(k); } catch (e) {} });
-    pintarFotos(); actualizarBtnExcel(); pintarNumeracion();
+    pintarFotos(); actualizarBtnExcel(); pintarNumeracion(); $('detSecc').open = false; $('secciones').innerHTML = '';
     window.scrollTo({ top: 0, behavior: 'smooth' });
   });
 
@@ -337,6 +337,73 @@
   });
 
 
+
+  // ───────── secciones de los apoyos ─────────
+  function selectorSeccion(valor, attrs) {
+    const v = C.normSeccion(valor || '');
+    const ops = ['<option value="">—</option>'].concat(C.SECCIONES.map(x => `<option${x === v ? ' selected' : ''}>${x}</option>`));
+    if (v && !C.SECCIONES.includes(v)) ops.push(`<option selected value="${esc(valor)}">${esc(valor)}</option>`);
+    ops.push('<option value="__otra">Otra…</option>');
+    return `<select ${attrs}>${ops.join('')}</select>`;
+  }
+  function pintarSecciones() {
+    const zona = $('secciones');
+    if (!$('detSecc').open) return;
+    let m = null;
+    try { if ($('txtMain').value.trim()) m = modeloDesdeTablas(); } catch (e) { m = null; }
+    if (!m) { zona.innerHTML = '<div class="info">Pega primero la tabla de posiciones.</div>'; return; }
+    const filas = C.filasSecciones(m);
+    estado.secc = { m, filas };
+    const salidas = [...new Set(filas.map(f => f.salida))].sort((a, b) => a - b);
+    const varios = new Set(filas.map(f => f.cuadro)).size > 1;
+    let h = `<div class="secc-bulk"><b style="width:100%;font-size:13px">Poner la misma sección a varios apoyos seguidos</b>
+      <label>Salida<select id="sbSal">${salidas.map(s => `<option value="${s}">${C.salName(s)}</option>`).join('')}</select></label>
+      <label>Desde apoyo<input id="sbDe" type="number" min="1"></label><label>Hasta apoyo<input id="sbA" type="number" min="1"></label>
+      <label>Sección${selectorSeccion('', 'id="sbSec"')}</label><button class="peq" id="btnSecBulk">Aplicar</button></div>`;
+    h += `<div class="scroll"><table class="tsec"><tr><th>Apoyo</th><th>Salida</th><th>Sección</th></tr>` + filas.map((f, i) => `<tr data-i="${i}"><td><b>${esc(f.apoyo)}</b> <span class="info">${esc(f.r.node.name)}</span></td><td>${varios ? 'C' + f.cuadro + ' ' : ''}${C.salName(f.salida)}</td><td>${selectorSeccion(f.propia, 'data-p="0"')}` +
+      f.compartidas.map((c, k) => `<div class="comp">Tramo compartido con ${C.salName(c.salida)}: ${selectorSeccion(c.seccion, `data-p="${k + 1}"`)}</div>`).join('') + '</td></tr>').join('') + '</table></div>';
+    h += '<div class="info">Los cambios se escriben en la tabla de posiciones (columna SECCIÓN) y salen en el KMZ y en el ANEXO III. En los tramos compartidos la celda queda como «RZ95 / RZ50» (su salida primero).</div>';
+    zona.innerHTML = h;
+  }
+  function guardarSecciones(cambios) {
+    const m = estado.secc.m;
+    const txt = C.editarTabla($('txtMain').value, m, cambios);
+    $('txtMain').value = txt; lsSet(LS.main, txt);
+  }
+  function valorFila(tr) {
+    const sels = [...tr.querySelectorAll('select')].map(s => s.value === '__otra' ? '' : s.value.trim());
+    while (sels.length > 1 && !sels[sels.length - 1]) sels.pop();
+    return sels.join(' / ');
+  }
+  $('secciones').addEventListener('change', e => {
+    const sel = e.target.closest('select'); if (!sel) return;
+    if (sel.value === '__otra') {
+      const v = prompt('Escribe la sección:', '');
+      if (v && v.trim()) { const o = document.createElement('option'); o.value = o.textContent = C.normSeccion(v); sel.insertBefore(o, sel.lastElementChild); sel.value = o.value; }
+      else { sel.value = ''; }
+    }
+    if (sel.id === 'sbSec') return;
+    const tr = sel.closest('tr[data-i]'); if (!tr) return;
+    const f = estado.secc.filas[+tr.dataset.i];
+    guardarSecciones([{ r: f.r, seccion: valorFila(tr) }]);
+    tr.classList.add('mod');
+  });
+  $('secciones').addEventListener('click', e => {
+    if (e.target.id !== 'btnSecBulk') return;
+    const sal = +$('sbSal').value, de = +$('sbDe').value, a = +$('sbA').value, sec = $('sbSec').value === '__otra' ? '' : $('sbSec').value;
+    if (!de || !a || !sec) return alert('Pon desde qué apoyo, hasta cuál y la sección.');
+    const [lo, hi] = de <= a ? [de, a] : [a, de];
+    const cambios = estado.secc.filas.filter(f => f.salida === sal && +f.apoyo >= lo && +f.apoyo <= hi).map(f => {
+      const resto = trim(f.r.seccion).split(/\s*\/\s*/).slice(1);
+      return { r: f.r, seccion: [sec].concat(resto).filter((x, i) => i === 0 || x).join(' / ') };
+    });
+    if (!cambios.length) return alert('No hay apoyos en ese rango.');
+    guardarSecciones(cambios); pintarSecciones();
+    $('secciones').querySelectorAll('tr[data-i]').forEach(tr => { const f = estado.secc.filas[+tr.dataset.i]; if (f.salida === sal && +f.apoyo >= lo && +f.apoyo <= hi) tr.classList.add('mod'); });
+  });
+  const trim = s => String(s == null ? '' : s).trim();
+  $('detSecc').addEventListener('toggle', pintarSecciones);
+
   // ───────── numeración de apoyos: huecos, repetidos y renumeración ─────────
   const lsJson = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } };
   function mapaTotal() { return lsJson(LS.mapa, {}); }
@@ -408,7 +475,7 @@
     $('txtMain').value = r.mainText; $('txtDef').value = r.defText; lsSet(LS.main, r.mainText); lsSet(LS.def, r.defText);
     infoTabla($('txtMain'), 'infoMain'); infoTabla($('txtDef'), 'infoDef');
     estado.fotos.forEach(f => { f.nombre = renombrar(f.orig); });
-    estado.fotoElegida = {};
+    estado.fotoElegida = {}; pintarSecciones();
     if (estado.kmzGenerado) { estado.avisoRegenerar = true; if (estado.kmzModificado === estado.kmzGenerado) estado.kmzModificado = null; estado.kmzGenerado = null; $('btnUsarGenerado').hidden = true; $('res1').innerHTML = ''; actualizarBtnExcel(); }
     pintarNumeracion();
   }
@@ -419,7 +486,7 @@
     try { localStorage.removeItem(LS.orig); localStorage.removeItem(LS.mapa); } catch (e) {}
     infoTabla($('txtMain'), 'infoMain'); infoTabla($('txtDef'), 'infoDef');
     estado.fotos.forEach(f => { f.nombre = f.orig; }); estado.fotoElegida = {};
-    pintarNumeracion();
+    pintarNumeracion(); pintarSecciones();
   }
   async function zipRenombradas() {
     const z = new JSZip();

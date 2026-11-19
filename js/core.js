@@ -267,6 +267,36 @@
 
 
 
+
+  // ───────────────────────── secciones ─────────────────────────
+  const SECCIONES = ['RZ150', 'RZ95', 'RZ50', 'RZ25', 'RZ2X25', 'RZ2X16', 'RZ2X10', 'CU2X6', 'CU2X10', 'AL2X6', 'AL2X10', 'CU3X6', 'CU3X10', 'AL3X6', 'AL3X10', 'CU4X6', 'CU4X10', 'AL4X6', 'AL4X10', '2X6', '2X10', '2X16', '3X6', '3X10', '3X16', '4X6', '4X10', '4X16'];
+  // Filas para el editor: sección propia y, si su tramo lo comparten otras salidas, la de cada una ("RZ95 / RZ50")
+  function filasSecciones(model) {
+    const comp = new Map();
+    (model.compartidos || []).forEach(c => { const r = c.tramo.row; if (!comp.has(r)) comp.set(r, []); comp.get(r).push(c.salida); });
+    return model.filas.filter(r => !r.esPT && r === r.node.row).map(r => {
+      const extra = (comp.get(r) || []).slice();
+      const partes = trim(r.seccion).split(/\s*\/\s*/);
+      return { r, salida: +r.salida, cuadro: +r.cuadro, apoyo: r.apoyo, propia: partes[0] || '', compartidas: extra.map((s, i) => ({ salida: s, seccion: partes[i + 1] || '' })) };
+    });
+  }
+  // Cambia celdas de la tabla principal manteniendo el resto del texto
+  function editarTabla(mainText, model, cambios) {
+    const sep = /\t/.test(mainText) ? '\t' : ';';
+    const porIdx = new Map(model.filas.map(r => [r.idxRaw, r]));
+    const porFila = new Map(cambios.map(c => [c.r, c]));
+    const lineas = String(mainText).replace(/\r\n?/g, '\n').split('\n').filter(l => l.trim() !== '');
+    return lineas.map((l, i) => {
+      const r = porIdx.get(i), c = r && porFila.get(r);
+      if (!c) return l;
+      const f = l.split(sep);
+      while (f.length <= r.off + 8) f.push('');
+      f[r.off + 8] = c.seccion;
+      return f.join(sep);
+    }).join('\n');
+  }
+  const normSeccion = s => upperEs(deaccent(s)).replace(/\s+/g, '').replace(/[*×]/g, 'X');
+
   // ───────────────────────── numeración de apoyos ─────────────────────────
   // Huecos y repetidos por cuadro/salida (los apoyos deberían ir 1, 2, 3… sin saltos)
   function analizarNumeracion(model) {
@@ -903,7 +933,7 @@
     return { avisos, nFotos: imgs.length };
   }
 
-  const api = { analizarNumeracion, propuestaCompactar, propuestaCambio, renumerar, haversine, parseCoords, splitTable, parseMain, parseDefects, buildModel, asociarFotos, buildKml, leyendaFilas, distancias,
+  const api = { SECCIONES, filasSecciones, editarTabla, normSeccion, analizarNumeracion, propuestaCompactar, propuestaCambio, renumerar, haversine, parseCoords, splitTable, parseMain, parseDefects, buildModel, asociarFotos, buildKml, leyendaFilas, distancias,
     parseKml, buildAnexo, anexoSheetXml, anexoWorkbookXml, anexoRichData, anexoContentTypes, anexoWorkbookRels, GRAVEDAD_DEFECTO, generarAnexoXlsx, normTipo, claseTipo, tieneCGP, salHex, salName, fmtMiles, pad2, upperEs, excelSerialToDate };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Core = api;
 })(typeof window !== 'undefined' ? window : globalThis);
