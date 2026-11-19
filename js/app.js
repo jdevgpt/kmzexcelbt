@@ -1,7 +1,7 @@
 /* Interfaz de KMZ + ANEXO III Red BT */
 (function () {
   'use strict';
-  const APP_VERSION = '1.3.0';
+  const APP_VERSION = '1.3.1';
   const C = window.Core;
   const $ = id => document.getElementById(id);
   const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -103,11 +103,22 @@
   $('btnQuitarFotos').addEventListener('click', () => { estado.fotos = []; pintarFotos(); });
 
   $('btnNuevo').addEventListener('click', () => {
-    if (!confirm('¿Empezar un proyecto nuevo? Se borran las tablas, las fotos y los KMZ cargados.')) return;
-    $('txtMain').value = ''; $('txtDef').value = ''; lsSet(LS.main, ''); lsSet(LS.def, '');
-    estado.fotos = []; estado.kmzGenerado = null; estado.kmzModificado = null; estado.modelo = null;
-    pintarFotos(); $('res1').innerHTML = ''; $('res2').innerHTML = ''; $('infoMain').textContent = ''; $('infoDef').textContent = '';
-    $('infoKmz').textContent = 'Ningún KMZ cargado.'; $('btnUsarGenerado').hidden = true; actualizarBtnExcel();
+    if (!confirm('¿Empezar un proyecto nuevo? Se borra todo lo del proyecto actual: tablas, fotos, KMZ, fotos elegidas para el Excel y el envío pendiente al informe.')) return;
+    // pantalla
+    $('txtMain').value = ''; $('txtDef').value = ''; $('chkSuf1').checked = false;
+    $('res1').innerHTML = ''; $('res2').innerHTML = ''; $('infoMain').textContent = ''; $('infoDef').textContent = '';
+    $('infoKmz').textContent = 'Ningún KMZ cargado.'; $('btnUsarGenerado').hidden = true;
+    $('fotosPick').innerHTML = '<div class="info">Carga el KMZ modificado para elegir las fotos.</div>';
+    ['fMain', 'fDef', 'fFotos', 'fKmz'].forEach(id => { $(id).value = ''; });
+    // memoria de la página
+    if (estado.miniaturas) estado.miniaturas.forEach(u => { if (u) URL.revokeObjectURL(u); });
+    estado.miniaturas = new Map(); estado.fotoElegida = {};
+    estado.fotos = []; estado.kmzGenerado = null; estado.kmzModificado = null; estado.kmzLeido = null; estado.modelo = null; estado.informe = null;
+    clearTimeout(estado.tGrav);
+    // memoria del navegador (el orden de gravedad es un ajuste y se conserva)
+    [LS.main, LS.def, LS.suf, 'jdev_kmz_informe'].forEach(k => { try { localStorage.removeItem(k); } catch (e) {} });
+    pintarFotos(); actualizarBtnExcel();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   });
 
   // ───────── leyenda (única imagen propia permitida) ─────────
