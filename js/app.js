@@ -1,7 +1,7 @@
 /* Interfaz de KMZ + ANEXO III Red BT */
 (function () {
   'use strict';
-  const APP_VERSION = '1.6.0';
+  const APP_VERSION = '1.6.1';
   const C = window.Core;
   const $ = id => document.getElementById(id);
   const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -346,6 +346,19 @@
     ops.push('<option value="__otra">Otra…</option>');
     return `<select ${attrs}>${ops.join('')}</select>`;
   }
+  // Selectores de una fila: la 1ª es la de su salida; luego las de tramos compartidos y las que se añadan con «+ sección»
+  function celdaSecciones(f, n) {
+    const partes = trim(f.r.seccion).split(/\s*\/\s*/);
+    const total = Math.max(n || 0, partes.filter(Boolean).length, 1 + f.compartidas.length, 1);
+    let h = '';
+    for (let i = 0; i < total; i++) {
+      const etiqueta = i === 0 ? '' : (f.compartidas[i - 1] ? `Compartido con ${C.salName(f.compartidas[i - 1].salida)}` : `Sección ${i + 1}`);
+      const quitar = i > 0 && !f.compartidas[i - 1] ? '<button type="button" class="sec peq sx" title="Quitar esta sección">×</button>' : '';
+      h += i === 0 ? `<div class="comp" style="margin-top:0">${selectorSeccion(partes[0] || '', 'data-p="0"')}<button type="button" class="sec peq smas">+ sección</button></div>`
+        : `<div class="comp">${etiqueta}: ${selectorSeccion(partes[i] || '', `data-p="${i}"`)}${quitar}</div>`;
+    }
+    return h;
+  }
   function pintarSecciones() {
     const zona = $('secciones');
     if (!$('detSecc').open) return;
@@ -360,10 +373,19 @@
       <label>Salida<select id="sbSal">${salidas.map(s => `<option value="${s}">${C.salName(s)}</option>`).join('')}</select></label>
       <label>Desde apoyo<input id="sbDe" type="number" min="1"></label><label>Hasta apoyo<input id="sbA" type="number" min="1"></label>
       <label>Sección${selectorSeccion('', 'id="sbSec"')}</label><button class="peq" id="btnSecBulk">Aplicar</button></div>`;
-    h += `<div class="scroll"><table class="tsec"><tr><th>Apoyo</th><th>Salida</th><th>Sección</th></tr>` + filas.map((f, i) => `<tr data-i="${i}"><td><b>${esc(f.apoyo)}</b> <span class="info">${esc(f.r.node.name)}</span></td><td>${varios ? 'C' + f.cuadro + ' ' : ''}${C.salName(f.salida)}</td><td>${selectorSeccion(f.propia, 'data-p="0"')}` +
-      f.compartidas.map((c, k) => `<div class="comp">Tramo compartido con ${C.salName(c.salida)}: ${selectorSeccion(c.seccion, `data-p="${k + 1}"`)}</div>`).join('') + '</td></tr>').join('') + '</table></div>';
-    h += '<div class="info">Los cambios se escriben en la tabla de posiciones (columna SECCIÓN) y salen en el KMZ y en el ANEXO III. En los tramos compartidos la celda queda como «RZ95 / RZ50» (su salida primero).</div>';
+    h += `<div class="scroll"><table class="tsec"><tr><th>Apoyo</th><th>Salida</th><th>Sección</th></tr>` + filas.map((f, i) => `<tr data-i="${i}"><td><b>${esc(f.apoyo)}</b> <span class="info">${esc(f.r.node.name)}</span></td><td>${varios ? 'C' + f.cuadro + ' ' : ''}${C.salName(f.salida)}</td><td>${celdaSecciones(f)}</td></tr>`).join('') + '</table></div>';
+    h += '<div class="info">Los cambios se escriben en la tabla de posiciones (columna SECCIÓN) y salen en el KMZ y en el ANEXO III. Con varias secciones en un apoyo la celda queda como «RZ95 / RZ50» (la de su salida primero).</div>';
     zona.innerHTML = h;
+  }
+  // Repinta la celda con una sección más, conservando lo elegido
+  function celdaSeccionesDesde(f, tr, n) {
+    const actual = [...tr.querySelectorAll('select')].map(s => s.value === '__otra' ? '' : s.value);
+    const falso = { r: { seccion: actual.join(' / ') }, compartidas: f.compartidas };
+    const html = celdaSecciones(falso, n);
+    // los huecos vacíos se respetan: se rellenan por posición
+    const tmp = document.createElement('td'); tmp.innerHTML = html;
+    [...tmp.querySelectorAll('select')].forEach((s, i) => { if (actual[i] !== undefined && [...s.options].some(o => o.value === actual[i])) s.value = actual[i]; });
+    return tmp.innerHTML;
   }
   function guardarSecciones(cambios) {
     const m = estado.secc.m;
@@ -371,9 +393,7 @@
     $('txtMain').value = txt; lsSet(LS.main, txt);
   }
   function valorFila(tr) {
-    const sels = [...tr.querySelectorAll('select')].map(s => s.value === '__otra' ? '' : s.value.trim());
-    while (sels.length > 1 && !sels[sels.length - 1]) sels.pop();
-    return sels.join(' / ');
+    return [...tr.querySelectorAll('select')].map(s => s.value === '__otra' ? '' : s.value.trim()).filter(Boolean).join(' / ');
   }
   $('secciones').addEventListener('change', e => {
     const sel = e.target.closest('select'); if (!sel) return;
@@ -389,6 +409,20 @@
     tr.classList.add('mod');
   });
   $('secciones').addEventListener('click', e => {
+    const tr = e.target.closest('tr[data-i]');
+    if (tr && e.target.classList.contains('smas')) {
+      const f = estado.secc.filas[+tr.dataset.i];
+      const n = tr.querySelectorAll('select').length + 1;
+      tr.cells[2].innerHTML = celdaSeccionesDesde(f, tr, n);
+      return;
+    }
+    if (tr && e.target.classList.contains('sx')) {
+      e.target.closest('.comp').remove();
+      const f = estado.secc.filas[+tr.dataset.i];
+      guardarSecciones([{ r: f.r, seccion: valorFila(tr) }]); tr.classList.add('mod');
+      tr.cells[2].innerHTML = celdaSeccionesDesde(f, tr, tr.querySelectorAll('select').length); // renumerar etiquetas
+      return;
+    }
     if (e.target.id !== 'btnSecBulk') return;
     const sal = +$('sbSal').value, de = +$('sbDe').value, a = +$('sbA').value, sec = $('sbSec').value === '__otra' ? '' : $('sbSec').value;
     if (!de || !a || !sec) return alert('Pon desde qué apoyo, hasta cuál y la sección.');

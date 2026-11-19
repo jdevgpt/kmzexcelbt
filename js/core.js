@@ -277,7 +277,7 @@
     return model.filas.filter(r => !r.esPT && r === r.node.row).map(r => {
       const extra = (comp.get(r) || []).slice();
       const partes = trim(r.seccion).split(/\s*\/\s*/);
-      return { r, salida: +r.salida, cuadro: +r.cuadro, apoyo: r.apoyo, propia: partes[0] || '', compartidas: extra.map((s, i) => ({ salida: s, seccion: partes[i + 1] || '' })) };
+      return { r, salida: +r.salida, cuadro: +r.cuadro, apoyo: r.apoyo, partes: partes.filter(Boolean), propia: partes[0] || '', compartidas: extra.map((s, i) => ({ salida: s, seccion: partes[i + 1] || '' })) };
     });
   }
   // Cambia celdas de la tabla principal manteniendo el resto del texto
