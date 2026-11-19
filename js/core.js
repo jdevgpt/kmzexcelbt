@@ -382,11 +382,53 @@
       return n === desde ? out : null;
     };
     const usosPorTramo = new Map();
+    model.adicionales = [];
+    const tramoEntre = (a, b) => model.tramos.find(t => t.dist != null && ((t.a === a && t.b === b) || (t.a === b && t.b === a)));
+    const marcarCompartido = (t, sd) => {
+      const usos = usosPorTramo.get(t) || []; if (usos.includes(sd)) return false;
+      usos.push(sd); usosPorTramo.set(t, usos);
+      model.compartidos.push({ tramo: t, salida: sd, orden: usos.length });
+      return true;
+    };
     lineas.forEach(l => {
       const L = deaccent(l).toUpperCase().replace(/\s+/g, ' ');
+      // Modo recorrido: "SAL03: 0, 12, 7, 13, 14" → la salida pasa por esos apoyos en ese orden
+      const rec = L.match(/^SAL(?:IDA)?\s*0*(\d+)\s*[:=]?\s*((?:\d+\s*[,;\-–\s]\s*)+\d+)\s*$/);
+      if (rec) {
+        const sd = +rec[1];
+        const nums = rec[2].split(/[^\d]+/).filter(Boolean).map(Number);
+        const nodos = []; let mal = false;
+        nums.forEach((num, i) => {
+          if (mal) return;
+          let n = nodoPor(num, sd);
+          if (n === null || n === 'ambiguo') {
+            const todos = num === 0 ? [model.pt] : model.nodes.filter(x => !x.esPT && x.apoyo === num);
+            const prev = nodos[i - 1];
+            const vecinos = prev ? todos.filter(x => tramoEntre(prev, x)) : [];
+            n = todos.length === 1 ? todos[0] : (vecinos.length === 1 ? vecinos[0] : (todos.length ? 'ambiguo' : null));
+          }
+          if (!n) { model.avisos.push(`Recorrido "${l}": el apoyo ${num} no está en la tabla.`); mal = true; return; }
+          if (n === 'ambiguo') { model.avisos.push(`Recorrido "${l}": el apoyo ${num} existe en varias salidas y no sé cuál es. Revisa la numeración.`); mal = true; return; }
+          nodos.push(n);
+        });
+        if (mal || nodos.length < 2) { if (!mal) model.avisos.push(`Recorrido "${l}": pon al menos dos apoyos.`); return; }
+        let nComp = 0, nAd = 0;
+        for (let i = 1; i < nodos.length; i++) {
+          const a = nodos[i - 1], b = nodos[i];
+          if (!a.coords || !b.coords || a === b) continue;
+          const t = tramoEntre(a, b);
+          if (t && t.salida === sd) continue;              // ya es un tramo de esta salida
+          if (t) { if (marcarCompartido(t, sd)) nComp++; continue; } // tramo de otra salida → paralela
+          if (!model.adicionales.some(x => x.salida === sd && ((x.a === a && x.b === b) || (x.a === b && x.b === a)))) {
+            model.adicionales.push({ a, b, salida: sd, cuadro: +(a.esPT ? b : a).cuadro || 1, dist: haversine(a.coords, b.coords) }); nAd++;
+          }
+        }
+        model.notas.push(`Recorrido de ${salName(sd)}: ${nodos.map(n => n.esPT ? 0 : n.apoyo).join('-')} → ${nComp} tramo${nComp === 1 ? '' : 's'} compartido${nComp === 1 ? '' : 's'} (paralela) y ${nAd} tramo${nAd === 1 ? '' : 's'} nuevo${nAd === 1 ? '' : 's'} que no estaba${nAd === 1 ? '' : 'n'} en la tabla.`);
+        return;
+      }
       const sals = [...L.matchAll(/SAL(?:IDA)?\s*0*(\d+)/g)].map(m => +m[1]);
       const ap = L.replace(/SAL(?:IDA)?\s*0*\d+/g, ' ').match(/(\d+)\s*(?:-|–|A|AL|HASTA)\s*(\d+)/);
-      if (!ap || !sals.length) { model.avisos.push(`Tramo compartido no entendido: "${l}". Escribe por ejemplo "1-6 SAL02" o "SAL01 1-6 SAL02".`); return; }
+      if (!ap || !sals.length) { model.avisos.push(`No entiendo "${l}". Escribe el recorrido de la salida, por ejemplo "SAL03: 0, 12, 7, 13", o un tramo compartido como "1-6 SAL02".`); return; }
       const conOrigen = /^(?:DE\s+|EN\s+)?SAL(?:IDA)?\s*0*\d+\s*[:,]?\s*(?:DEL?\s+|APOYOS?\s+)?\d/.test(L) && sals.length > 1;
       const origen = conOrigen ? sals[0] : null; const destinos = conOrigen ? sals.slice(1) : sals;
       let A = nodoPor(ap[1], origen), B = nodoPor(ap[2], origen);
@@ -404,13 +446,7 @@
       if (!ts || !ts.length) { model.avisos.push(`Tramo compartido "${l}": no hay un camino de línea entre esos dos apoyos en la tabla.`); return; }
       destinos.forEach(sd => {
         let n = 0;
-        ts.forEach(t => {
-          if (t.salida === sd) return; // ya es de esa salida
-          const usos = usosPorTramo.get(t) || []; if (usos.includes(sd)) return;
-          usos.push(sd); usosPorTramo.set(t, usos);
-          model.compartidos.push({ tramo: t, salida: sd, orden: usos.length });
-          n++;
-        });
+        ts.forEach(t => { if (t.salida !== sd && marcarCompartido(t, sd)) n++; });
         model.notas.push(`Tramo compartido: ${salName(sd)} también va por ${A.name} → ${B.name} (${n} tramo${n === 1 ? '' : 's'}, línea paralela).`);
       });
     });
@@ -535,7 +571,7 @@
     if (dc.some(c => c !== 'ZOBX' && c !== 'ZOBX_Q91X')) rows.push({ k: 'DEF' });
     if (dc.includes('ZOBX')) rows.push({ k: 'ZOBX' });
     if (dc.includes('ZOBX_Q91X')) rows.push({ k: 'Q91X' });
-    [...new Set(model.tramos.filter(t => t.dist != null).map(t => t.salida).concat((model.compartidos || []).map(c => c.salida)))].sort((a, b) => a - b).forEach(s => rows.push({ k: 'SAL', salida: s, color: salHex(s), label: salName(s) }));
+    [...new Set(model.tramos.filter(t => t.dist != null).map(t => t.salida).concat((model.compartidos || []).map(c => c.salida), (model.adicionales || []).map(x => x.salida)))].sort((a, b) => a - b).forEach(s => rows.push({ k: 'SAL', salida: s, color: salHex(s), label: salName(s) }));
     const labels = { APOYO: 'APOYO', APOYO_CGP: 'APOYO CON CGP/CPM', CGP: 'CGP/CPM', POST: 'POST', GPAL: 'G/PAL', DEF: 'DEFECTO', ZOBX: 'ZOBX', Q91X: 'ZOBX_Q91X' };
     rows.forEach(r => { if (!r.label) r.label = labels[r.k]; });
     return rows;
@@ -555,7 +591,7 @@
     k += styleIcon('sDef', ICON('shapes/flag.png'), HOT_FLAG, 'ff0000ff');
     k += styleIcon('sZOBX', ICON('paddle/red-diamond.png'), HOT_PAD);
     k += styleIcon('sQ91X', ICON('paddle/blu-diamond.png'), HOT_PAD);
-    const salidas = [...new Set(model.tramos.map(t => t.salida).concat((model.compartidos || []).map(c => c.salida)))].sort((a, b) => a - b);
+    const salidas = [...new Set(model.tramos.map(t => t.salida).concat((model.compartidos || []).map(c => c.salida), (model.adicionales || []).map(x => x.salida)))].sort((a, b) => a - b);
     salidas.forEach(s => { k += `\t<Style id="sSAL${pad2(s)}">\n\t\t<LineStyle>\n\t\t\t<color>${salColor(s)}</color>\n\t\t\t<width>2</width>\n\t\t</LineStyle>\n\t</Style>\n`; });
 
     // APOYOS
@@ -573,12 +609,13 @@
     const cuadros = [...new Set(model.tramos.map(t => t.cuadro))];
     const grupos = {};
     model.tramos.forEach(t => { if (t.dist == null) return; const g = (cuadros.length > 1 ? `CUADRO ${pad2(t.cuadro)} - ` : '') + salName(t.salida); (grupos[g] = grupos[g] || { s: t.salida, c: t.cuadro, t: [] }).t.push(t); });
+    (model.adicionales || []).forEach(x => { const g = (cuadros.length > 1 ? `CUADRO ${pad2(x.cuadro)} - ` : '') + salName(x.salida); (grupos[g] = grupos[g] || { s: x.salida, c: x.cuadro, t: [] }).t.push({ a: x.a, b: x.b, salida: x.salida, adicional: true }); });
     (model.compartidos || []).forEach(c => { const t = c.tramo; const g = (cuadros.length > 1 ? `CUADRO ${pad2(t.cuadro)} - ` : '') + salName(c.salida); (grupos[g] = grupos[g] || { s: c.salida, c: t.cuadro, t: [] }).t.push({ a: t.a, b: t.b, salida: c.salida, compartido: c }); });
     Object.keys(grupos).sort((a, b) => grupos[a].c - grupos[b].c || grupos[a].s - grupos[b].s).forEach(g => {
       k += `\t\t<Folder>\n\t\t\t<name>${g}</name>\n`;
       grupos[g].t.forEach(t => {
         const cs = t.compartido ? paralela(t.a.coords, t.b.coords, SEP_COMPARTIDO * t.compartido.orden) : [t.a.coords, t.b.coords];
-        const nom = `${t.a.code} → ${t.b.code}` + (t.compartido ? ` (compartido con ${salName(t.compartido.tramo.salida)})` : '');
+        const nom = `${t.a.code} → ${t.b.code}` + (t.compartido ? ` (compartido con ${salName(t.compartido.tramo.salida)})` : t.adicional ? ` (recorrido ${salName(t.salida)})` : '');
         k += `\t\t\t<Placemark>\n\t\t\t\t<name>${nom}</name>\n\t\t\t\t<styleUrl>#sSAL${pad2(t.salida)}</styleUrl>\n\t\t\t\t<LineString>\n\t\t\t\t\t<tessellate>1</tessellate>\n\t\t\t\t\t<coordinates>\n\t\t\t\t\t\t${coordStr(cs[0])} ${coordStr(cs[1])} \n\t\t\t\t\t</coordinates>\n\t\t\t\t</LineString>\n\t\t\t</Placemark>\n`;
       });
       k += '\t\t</Folder>\n';
@@ -611,6 +648,7 @@
     const porSalida = {}; let total = 0;
     model.tramos.forEach(t => { if (t.dist == null) return; const g = salName(t.salida); porSalida[g] = (porSalida[g] || 0) + t.dist; total += t.dist; });
     (model.compartidos || []).forEach(c => { const g = salName(c.salida); porSalida[g] = (porSalida[g] || 0) + c.tramo.dist; });
+    (model.adicionales || []).forEach(x => { const g = salName(x.salida); porSalida[g] = (porSalida[g] || 0) + x.dist; total += x.dist; });
     return { porSalida, total };
   }
 
@@ -707,8 +745,8 @@
     model.tramos.forEach(t => {
       const A = pos(t.a), B = pos(t.b); if (!A || !B) return;
       const nombres = [`${t.a.code} → ${t.b.code}`, `${t.b.code} → ${t.a.code}`];
-      let L = kd.lineas.findIndex((l, i) => !usadas.has(i) && !/\(compartido/i.test(l.name) && nombres.includes(l.name.replace(/\s*(->|→)\s*/, ' → ')));
-      if (L < 0) L = kd.lineas.findIndex((l, i) => !usadas.has(i) && !/\(compartido/i.test(l.name) && ((near(l.ini, A) && near(l.fin, B)) || (near(l.ini, B) && near(l.fin, A))));
+      let L = kd.lineas.findIndex((l, i) => !usadas.has(i) && !/\((compartido|recorrido)/i.test(l.name) && nombres.includes(l.name.replace(/\s*(->|→)\s*/, ' → ')));
+      if (L < 0) L = kd.lineas.findIndex((l, i) => !usadas.has(i) && !/\((compartido|recorrido)/i.test(l.name) && ((near(l.ini, A) && near(l.fin, B)) || (near(l.ini, B) && near(l.fin, A))));
       if (L < 0) avisos.push(`Topología: el tramo ${t.a.name} → ${t.b.name} de la tabla no tiene línea en SALIDAS del KMZ.`);
       else {
         usadas.add(L); const l = kd.lineas[L];
@@ -716,7 +754,7 @@
         if (!ok) resumen.push(`La línea ${t.a.name} → ${t.b.name} no llega exactamente a la posición de los apoyos en el KMZ (¿apoyo movido sin mover la línea?). DIST. se calcula entre apoyos.`);
       }
     });
-    kd.lineas.forEach((l, i) => { if (!usadas.has(i) && !/\(compartido/i.test(l.name)) avisos.push(`Topología: la línea "${l.name}" del KMZ no corresponde a ningún tramo INICIO/FIN de la tabla.`); });
+    kd.lineas.forEach((l, i) => { if (!usadas.has(i) && !/\((compartido|recorrido)/i.test(l.name)) avisos.push(`Topología: la línea "${l.name}" del KMZ no corresponde a ningún tramo INICIO/FIN de la tabla.`); });
 
     // Defectos desde las carpetas ZOBX y DEFECTOS del KMZ
     const marcas = kd.puntos.filter(p => p.carpeta === 'ZOBX' || p.carpeta === 'DEFECTOS');
