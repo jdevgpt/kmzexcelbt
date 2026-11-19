@@ -6,7 +6,8 @@ Webapp (GitHub Pages, instalable y sin conexión) que aplica los prompts maestro
    (carpetas APOYOS / SALIDAS / CGP_CPM / ZOBX / DEFECTOS, iconos nativos de Google Earth, fotos embebidas en `files/`, leyenda).
 2. **Generar ANEXO III** – sube el KMZ ya modificado en Google Earth → `ANEXO III - xxxx.xlsx` sobre la plantilla de 14 columnas con Q91X.
    Del KMZ salen posiciones (DIST. por Haversine), defectos (código, apoyo, descripción), observaciones y fotos; se avisa si la topología no coincide con la tabla.
-   En FOTO se coloca dentro de la celda la foto general _1 del PT/CT y, en cada apoyo con defecto, la primera foto del defecto más grave (orden de gravedad editable).
+   En FOTO se coloca dentro de la celda la foto que elijas en cada fila (viene preseleccionada la _1 del PT y la 1ª del defecto más grave).
+3. **Enviar al Informe BT** – rellena el centro en la app InformesConBT (misma web): CD, fecha, dirección de la base de datos y tabla de defectos sin ZOBX.
 
 Todo se procesa en el navegador: los datos no salen del equipo.
 

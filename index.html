@@ -16,6 +16,7 @@
     --radio:12px;
   }
   *{box-sizing:border-box}
+  [hidden]{display:none!important}
   body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;background:var(--gris-1);color:var(--gris-9);font-size:15px;line-height:1.45}
   header{background:linear-gradient(135deg,var(--gris-9) 0%,#33383f 60%,var(--naranja-osc) 160%);color:#fff;padding:18px 20px 16px}
   .cab{max-width:1000px;margin:0 auto;display:flex;align-items:center;gap:16px}
@@ -65,6 +66,15 @@
   .jdev{position:fixed;right:12px;bottom:8px;font-size:11px;color:var(--gris-5);letter-spacing:.5px;opacity:.75}
   .bloq{opacity:.55;pointer-events:none}
   .ok-box{background:#e8f5ec;border:1px solid #b7e1c2;border-radius:8px;padding:8px 12px;margin:8px 0}
+  .fp-fila{border-top:1px solid var(--gris-3);padding:10px 0}
+  .fp-tit{font-weight:600;font-size:14px;margin-bottom:6px}
+  .fp-fotos{display:flex;gap:8px;flex-wrap:wrap}
+  .fp-foto{background:var(--blanco);border:2px solid var(--gris-3);border-radius:10px;padding:4px;width:128px;display:flex;flex-direction:column;align-items:stretch;gap:4px;color:var(--gris-7);font-weight:500;font-size:11.5px;cursor:pointer}
+  .fp-foto:hover{background:var(--gris-1);border-color:var(--gris-5)}
+  .fp-foto img{width:100%;height:92px;object-fit:cover;border-radius:6px;background:var(--gris-1)}
+  .fp-foto span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:center}
+  .fp-foto.on{border-color:var(--naranja);background:var(--naranja-claro);color:var(--gris-9);box-shadow:0 0 0 2px var(--naranja-claro)}
+  .fp-no{justify-content:center;min-height:120px}
   .err-box{background:#fdecea;border:1px solid #f5c2bf;border-radius:8px;padding:8px 12px;margin:8px 0;color:var(--error)}
 </style>
 </head>
@@ -122,11 +132,15 @@
     <div class="drop" id="dropKmz">Arrastra aquí el KMZ modificado o <u>pulsa para elegir</u></div>
     <input type="file" id="fKmz" accept=".kmz,.kml">
     <div class="fila"><span class="info" id="infoKmz">Ningún KMZ cargado.</span><button class="sec peq" id="btnUsarGenerado" hidden>Usar el KMZ recién generado</button></div>
-    <details style="margin-top:12px"><summary>Columna FOTO y orden de gravedad de defectos</summary>
-      <p class="info" style="margin:6px 0">En FOTO se coloca, dentro de la celda: en el apoyo 0 la foto general <b>_1</b> del PT/CT; en los apoyos con defecto, la primera foto del defecto más grave. Orden de gravedad (de más a menos grave; ZOBX siempre al final):</p>
-      <textarea id="txtGrav" style="min-height:58px;white-space:normal"></textarea>
-      <div class="fila"><button class="sec peq" id="btnGravDef">Restablecer orden por defecto</button></div>
-    </details>
+    <div style="margin-top:14px">
+      <label class="t">Foto de cada fila (columna FOTO)</label>
+      <div id="fotosPick"><div class="info">Carga el KMZ modificado para elegir las fotos.</div></div>
+      <details style="margin-top:8px"><summary>Orden de gravedad para la preselección</summary>
+        <p class="info" style="margin:6px 0">Solo sirve para marcar de entrada una foto cuando un apoyo tiene varios defectos; luego eliges tú. De más a menos grave; ZOBX siempre al final:</p>
+        <textarea id="txtGrav" style="min-height:58px;white-space:normal"></textarea>
+        <div class="fila"><button class="sec peq" id="btnGravDef">Restablecer orden por defecto</button></div>
+      </details>
+    </div>
     <div class="acciones"><button id="btnExcel" disabled>Generar ANEXO III</button></div>
     <div id="res2"></div>
   </section>

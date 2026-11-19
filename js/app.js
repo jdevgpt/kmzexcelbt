@@ -1,7 +1,7 @@
 /* Interfaz de KMZ + ANEXO III Red BT */
 (function () {
   'use strict';
-  const APP_VERSION = '1.1.0';
+  const APP_VERSION = '1.3.0';
   const C = window.Core;
   const $ = id => document.getElementById(id);
   const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -220,12 +220,44 @@
   zonaDrop($('dropKmz'), $('fKmz'), files => {
     const f = files.find(x => /\.(kmz|kml)$/i.test(x.name)); if (!f) { alert('Elige un archivo .kmz o .kml'); return; }
     estado.kmzModificado = { blob: f, nombre: f.name };
-    $('infoKmz').textContent = 'KMZ cargado: ' + f.name; actualizarBtnExcel();
+    $('infoKmz').textContent = 'KMZ cargado: ' + f.name; actualizarBtnExcel(); prepararFotos(true);
   });
   $('btnUsarGenerado').addEventListener('click', () => {
     estado.kmzModificado = estado.kmzGenerado;
-    $('infoKmz').textContent = 'Usando el KMZ recién generado (sin modificar): ' + estado.kmzGenerado.nombre; actualizarBtnExcel();
+    $('infoKmz').textContent = 'Usando el KMZ recién generado (sin modificar): ' + estado.kmzGenerado.nombre; actualizarBtnExcel(); prepararFotos(true);
   });
+
+  // ───────── elección de la foto de cada fila (columna FOTO) ─────────
+  estado.fotoElegida = {}; estado.miniaturas = new Map();
+  async function prepararFotos(nuevoKmz) {
+    const zona = $('fotosPick');
+    if (nuevoKmz) { estado.fotoElegida = {}; estado.miniaturas.forEach(u => URL.revokeObjectURL(u)); estado.miniaturas = new Map(); }
+    const kmz = estado.kmzModificado || estado.kmzGenerado;
+    if (!kmz) { zona.innerHTML = ''; return; }
+    try {
+      const m = modeloDesdeTablas();
+      const k = await leerKmz(kmz); estado.kmzLeido = k;
+      const an = C.buildAnexo(m, C.parseKml(k.kml), { gravedad: $('txtGrav').value.split(/[\s,;]+/) });
+      const filas = an.filas.filter(f => f.candidatas.length);
+      if (!filas.length) { zona.innerHTML = '<div class="info">No hay fotos que elegir (ni foto _1 del PT ni fotos de defectos en el KMZ).</div>'; return; }
+      const leer = lectorImagenes(k.zip);
+      for (const f of filas) for (const c of f.candidatas) if (!estado.miniaturas.has(c.src)) { const d = await leer(c.src); estado.miniaturas.set(c.src, d ? URL.createObjectURL(new Blob([d], { type: d[0] === 0x89 ? 'image/png' : 'image/jpeg' })) : ''); }
+      zona.innerHTML = `<p class="info" style="margin:4px 0 8px">Pulsa la foto que quieres en cada fila. Viene marcada la que elegiría la app (foto _1 en el PT; 1ª foto del defecto más grave en los apoyos).</p>` + filas.map(f => {
+        const sel = Object.prototype.hasOwnProperty.call(estado.fotoElegida, f.clave) ? estado.fotoElegida[f.clave] : (f.fotoSrc || '');
+        const titulo = f.apoyo === '0' || +f.apoyo === 0 ? `Apoyo 0 · PT/CT ${esc(f.ct)}` : `Apoyo ${esc(f.apoyo)} · ${esc([f.defec, f.q91x].filter(Boolean).join(' / ') || 'defecto')}`;
+        return `<div class="fp-fila" data-k="${esc(f.clave)}"><div class="fp-tit">${titulo}</div><div class="fp-fotos">` +
+          f.candidatas.map(c => `<button type="button" class="fp-foto${sel === c.src ? ' on' : ''}" data-src="${esc(c.src)}" title="${esc(c.src.split('/').pop())}"><img loading="lazy" src="${estado.miniaturas.get(c.src) || ''}" alt=""><span>${esc((suf => c.etiqueta === 'General' ? ('General ' + suf).trim() : (suf || c.etiqueta))(c.src.split('/').pop().replace(/\.\w+$/, '').replace(/^\d+_?/, '')))}</span></button>`).join('') +
+          `<button type="button" class="fp-foto fp-no${sel === '' ? ' on' : ''}" data-src=""><span>Sin foto</span></button></div></div>`;
+      }).join('');
+    } catch (e) { zona.innerHTML = `<div class="err-box">${esc(e.message)}</div>`; }
+  }
+  $('fotosPick').addEventListener('click', e => {
+    const b = e.target.closest('.fp-foto'); if (!b) return;
+    const fila = b.closest('.fp-fila');
+    estado.fotoElegida[fila.dataset.k] = b.dataset.src;
+    fila.querySelectorAll('.fp-foto').forEach(x => x.classList.toggle('on', x === b));
+  });
+  $('fotosPick').addEventListener('dblclick', e => { const b = e.target.closest('.fp-foto'); if (b && b.dataset.src) window.open(estado.miniaturas.get(b.dataset.src), '_blank'); });
 
   async function leerKmz(k) {
     if (/\.kml$/i.test(k.nombre)) return { kml: await k.blob.text(), zip: null };
@@ -248,7 +280,7 @@
   // Orden de gravedad de defectos (para elegir la foto)
   const LS_GRAV = 'kmzexcelbt.gravedad';
   $('txtGrav').value = lsGet(LS_GRAV) || C.GRAVEDAD_DEFECTO.join(', ');
-  $('txtGrav').addEventListener('input', () => lsSet(LS_GRAV, $('txtGrav').value));
+  $('txtGrav').addEventListener('input', () => { lsSet(LS_GRAV, $('txtGrav').value); clearTimeout(estado.tGrav); estado.tGrav = setTimeout(() => prepararFotos(false), 600); });
   $('btnGravDef').addEventListener('click', () => { $('txtGrav').value = C.GRAVEDAD_DEFECTO.join(', '); lsSet(LS_GRAV, ''); });
 
   $('btnExcel').addEventListener('click', async () => {
@@ -258,7 +290,7 @@
       if (!kmz) throw new Error('Carga primero el KMZ modificado.');
       const m = modeloDesdeTablas(); // siempre desde las tablas guardadas
       const k = await leerKmz(kmz);
-      const an = C.buildAnexo(m, C.parseKml(k.kml), { gravedad: $('txtGrav').value.split(/[\s,;]+/) });
+      const an = C.buildAnexo(m, C.parseKml(k.kml), { gravedad: $('txtGrav').value.split(/[\s,;]+/), fotoElegida: estado.fotoElegida });
       const tpl = await JSZip.loadAsync(Uint8Array.from(atob(window.ANEXO_TEMPLATE_B64), c => c.charCodeAt(0)));
       const gx = await C.generarAnexoXlsx(tpl, an, m.ct, lectorImagenes(k.zip));
       an.avisos.push(...gx.avisos);
@@ -269,10 +301,21 @@
       const conDef = an.filas.filter(f => f.defec || f.q91x);
       let h = `<div class="res"><div class="ok-box">✔ <b>${esc(nombre)}</b> generado y descargado desde <i>${esc(kmz.nombre)}</i>.</div>
         <div class="chips"><span class="chip">Filas <b>${an.filas.length}</b></span><span class="chip">Con defecto <b>${conDef.length}</b></span><span class="chip">Suma DIST. <b>${C.fmtMiles(an.totalDist)} m</b></span><span class="chip">Fotos en FOTO <b>${gx.nFotos}</b></span><span class="chip">Defectos leídos de <b>${an.fuenteDef}</b></span></div>`;
+      const inf = an.informe;
+      const [fy, fm, fd] = (inf.fecha || '--').split('-');
+      h += `<div class="ok-box" style="background:var(--naranja-claro);border-color:#f3c79c">
+        <b>Informe BT ${esc(inf.centro)}</b> · fecha ${esc(fd + '/' + fm + '/' + fy)} · ${inf.defectos.length ? inf.defectos.length + ' defecto(s) para la tabla (sin ZOBX)' : 'sin defectos (solo había ZOBX)'}
+        <div class="acciones" style="margin-top:8px"><button id="btnInforme">Enviar al Informe BT</button></div>
+        <div class="info">Abre la app de informes con el centro relleno. Allí revisas dirección, población y provincia, pones la foto del ANEXO I y descargas Word + PDF.</div></div>`;
+      estado.informe = inf;
       h += an.avisos.length ? `<b class="t-aviso">Avisos (${an.avisos.length})</b>${listaAvisos(an.avisos, 't-aviso')}` : '<div class="t-ok">Topología del KMZ coincide con la tabla. Sin avisos.</div>';
       if (an.resumen.length) h += `<details open><summary>Supuestos aplicados</summary>${listaAvisos(an.resumen, '')}</details>`;
       h += `<details><summary>Ver filas del ANEXO III</summary><div class="scroll"><table><tr><th>Nº</th><th>TIPO</th><th>INICIO</th><th>FIN</th><th>SECCIÓN</th><th>DIST.</th><th>DEFEC.</th><th>Q91X</th><th>OBSERVACIONES</th><th>FOTO</th></tr>${an.filas.map(f => `<tr><td>${esc(f.apoyo)}</td><td>${esc(f.tipo)}</td><td>${esc(f.inicio)}</td><td>${esc(f.fin)}</td><td>${esc(f.seccion)}</td><td>${f.dist}</td><td>${esc(f.defec)}</td><td>${esc(f.q91x)}</td><td>${esc(f.obs)}</td><td>${f.fotoVm ? esc(f.fotoSrc.split('/').pop()) + '<br><span class="info">' + esc(f.fotoMotivo) + '</span>' : ''}</td></tr>`).join('')}</table></div></details></div>`;
       $('res2').innerHTML = h;
+      $('btnInforme').addEventListener('click', () => {
+        try { localStorage.setItem('jdev_kmz_informe', JSON.stringify(estado.informe)); } catch (e) { alert('No se pudo guardar en este navegador'); return; }
+        window.open('../InformesConBT/?kmz=1', 'informesconbt');
+      });
     } catch (e) {
       console.error(e); $('res2').innerHTML = `<div class="res"><div class="err-box">${esc(e.message)}</div></div>`;
     } finally { btn.textContent = 'Generar ANEXO III'; actualizarBtnExcel(); }

@@ -624,15 +624,35 @@
           fotoMotivo = ds.length > 1 ? `${conFoto[0].d.codigo} (el más grave de ${[...new Set(ds.map(d => d.codigo))].join(', ')})` : conFoto[0].d.codigo;
         } else avisos.push(`El apoyo ${r.apoyo} tiene defecto (${ds.map(d => d.codigo).join(', ')}) pero ninguna foto del defecto en el KMZ: FOTO queda vacía.`);
       }
+      // Candidatas para que el usuario elija la foto
+      let candidatas = [];
+      if (n.esPT && r === n.row && p) candidatas = p.imgs.map(src => ({ src, etiqueta: 'General' }));
+      else if (ds.length) ds.forEach(d => d.imgs.forEach(src => { if (!candidatas.some(c => c.src === src)) candidatas.push({ src, etiqueta: d.codigo }); }));
+      const clave = r === n.row && candidatas.length ? n.code : '';
+      const eleg = opts.fotoElegida || {};
+      if (clave && Object.prototype.hasOwnProperty.call(eleg, clave) && (eleg[clave] === '' || candidatas.some(c => c.src === eleg[clave]))) {
+        foto = eleg[clave] || null; fotoMotivo = eleg[clave] ? 'elegida a mano' : 'sin foto (elegido a mano)';
+      }
       const partes = [obs].concat(descs).filter(x => trim(x) !== '');
-      return {
+      return { clave, candidatas,
         fecha: r.fecha, ct: model.ct, cuadro: r.cuadro, salida: r.salida, apoyo: r.apoyo, tipo,
         inicio: r.esPT ? (inicio || '0') : inicio, fin: r.esPT ? (fin || '0') : fin, seccion: r.seccion, dist,
         defec: codigos.join(' / '), q91x: q91.join(' / '), obs: upperEs(partes.join(' / ')), foto: '', fotoSrc: foto, fotoMotivo
       };
     });
     const totalDist = filas.reduce((s, f) => s + (f.dist === '' ? 0 : f.dist), 0);
-    return { filas, avisos, resumen, totalDist, fuenteDef };
+    // Datos para la app de informes: todos los defectos menos ZOBX, en orden de apoyos
+    const defectosInforme = [];
+    model.filas.forEach(r => {
+      if (r !== r.node.row) return;
+      (defPorNodo.get(r.node) || []).forEach(d => {
+        if (d.codigo === 'ZOBX') return;
+        defectosInforme.push({ apoyo: r.node.code, cod: d.codigo === 'ZOBX_Q91X' ? 'Q91X' : d.codigo, des: '', linea: model.ct, obs: upperEs(trim(d.desc)) });
+      });
+    });
+    const isoDe = f => { const m = trim(f).match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/); if (!m) return ''; const y = m[3].length === 2 ? '20' + m[3] : m[3]; return `${y}-${pad2(+m[2])}-${pad2(+m[1])}`; };
+    const fechaInforme = model.filas.map(r => isoDe(r.fecha)).filter(Boolean).sort().pop() || '';
+    return { filas, avisos, resumen, totalDist, fuenteDef, informe: { centro: model.ct, fecha: fechaInforme, defectos: defectosInforme } };
   }
 
   // ───────────────────────── imágenes dentro de celda (como el ANEXO III real) ─────────────────────────
