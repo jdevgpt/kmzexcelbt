@@ -450,33 +450,54 @@
   }
 
   // ───────────────────────── lectura de KMZ (modificado) ─────────────────────────
+  const CARPETAS = ['APOYOS', 'SALIDAS', 'CGP_CPM', 'ZOBX', 'DEFECTOS'];
+  const decodeEnt = s => String(s).replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&');
+  const textoDe = s => { s = String(s || ''); const cd = s.match(/<!\[CDATA\[([\s\S]*?)\]\]>/); return cd ? s.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1') : decodeEnt(s); };
+  const campoPopup = (html, k) => { const m = String(html || '').match(new RegExp('<b>\\s*' + k + '\\s*:?\\s*</b>\\s*:?\\s*([\\s\\S]*?)(?:<br\\s*/?>|$)', 'i')); return m ? decodeEnt(m[1].replace(/<[^>]+>/g, '')).trim() : null; };
+  const imgsPopup = html => { const out = []; String(html || '').replace(/<img\b[^>]*?\bsrc\s*=\s*["']([^"']+)["']/gi, (m, src) => { out.push(src); return m; }); return out; };
+
+  // Lee el KML respetando las carpetas (APOYOS, SALIDAS, CGP_CPM, ZOBX, DEFECTOS)
   function parseKml(kml) {
     const puntos = [], lineas = [];
-    const re = /<Placemark\b([^>]*)>([\s\S]*?)<\/Placemark>/g; let m;
+    const re = /<Folder\b[^>]*>|<\/Folder>|<Placemark\b([^>]*)>([\s\S]*?)<\/Placemark>/g; let m;
+    const stack = [];
     const num = s => s.trim().split(/\s+/).map(t => t.split(',').map(Number)).filter(p => p.length >= 2 && isFinite(p[0]) && isFinite(p[1]));
     while ((m = re.exec(kml))) {
+      if (m[0].startsWith('<Folder')) {
+        let rest = kml.slice(re.lastIndex, re.lastIndex + 3000);
+        const cut = rest.search(/<Placemark\b|<Folder\b/); if (cut >= 0) rest = rest.slice(0, cut);
+        const nm = rest.match(/<name>([\s\S]*?)<\/name>/);
+        stack.push(nm ? textoDe(nm[1]).trim().toUpperCase() : '');
+        continue;
+      }
+      if (m[0] === '</Folder>') { stack.pop(); continue; }
       const body = m[2];
+      const carpeta = [...stack].reverse().find(f => CARPETAS.includes(f)) || '';
       const idm = m[1].match(/\bid="([^"]*)"/);
       const nm = body.match(/<name>([\s\S]*?)<\/name>/);
-      let name = nm ? nm[1].replace(/<!\[CDATA\[|\]\]>/g, '').trim() : '';
-      name = name.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+      const name = nm ? textoDe(nm[1]).trim() : '';
+      const dm = body.match(/<description>([\s\S]*?)<\/description>/);
+      const desc = dm ? textoDe(dm[1]) : '';
       const pc = body.match(/<Point>[\s\S]*?<coordinates>([\s\S]*?)<\/coordinates>/);
       const lc = body.match(/<LineString>[\s\S]*?<coordinates>([\s\S]*?)<\/coordinates>/);
-      if (pc) { const p = num(pc[1])[0]; if (p) puntos.push({ id: idm ? idm[1] : '', name, lat: p[1], lon: p[0] }); }
-      else if (lc) { const ps = num(lc[1]); if (ps.length >= 2) lineas.push({ name, ini: { lat: ps[0][1], lon: ps[0][0] }, fin: { lat: ps[ps.length - 1][1], lon: ps[ps.length - 1][0] } }); }
+      if (pc) { const p = num(pc[1])[0]; if (p) puntos.push({ carpeta, id: idm ? idm[1] : '', name, lat: p[1], lon: p[0], desc, imgs: imgsPopup(desc) }); }
+      else if (lc) { const ps = num(lc[1]); if (ps.length >= 2) lineas.push({ carpeta, name, ini: { lat: ps[0][1], lon: ps[0][0] }, fin: { lat: ps[ps.length - 1][1], lon: ps[ps.length - 1][0] } }); }
     }
     return { puntos, lineas };
   }
 
-  // Posición de cada nodo de la tabla según el KMZ
-  function posicionesDesdeKmz(model, kmlData) {
+  // Punto del KMZ (carpeta APOYOS) que corresponde a cada nodo de la tabla
+  function puntosDesdeKmz(model, kd) {
     const avisos = [];
-    const byName = {}; kmlData.puntos.forEach(p => { (byName[p.name] = byName[p.name] || []).push(p); });
-    const byId = {}; kmlData.puntos.forEach(p => { if (p.id) byId[p.id] = p; });
-    const pos = new Map();
+    const conCarpeta = kd.puntos.some(p => p.carpeta === 'APOYOS');
+    const ap = kd.puntos.filter(p => conCarpeta ? p.carpeta === 'APOYOS' : !['CGP_CPM', 'ZOBX', 'DEFECTOS'].includes(p.carpeta));
+    const byName = {}; ap.forEach(p => { (byName[p.name] = byName[p.name] || []).push(p); });
+    const byId = {}; ap.forEach(p => { if (p.id) byId[p.id] = p; });
+    const pto = new Map();
     model.nodes.forEach(n => {
       const id = 'n_' + (n.esPT ? 'PT' : n.cuadro + '_' + n.salida + '_' + n.apoyo);
-      let cands = (byName[n.name] || []).concat(n.esPT ? (byName[n.code] || byName['CT' + n.ct] || byName['PT' + n.ct] || []) : (byName[n.code] || []));
+      let cands = (byName[n.name] || []).concat(byName[n.code] || []);
+      if (n.esPT) cands = cands.concat(byName['PT' + n.ct] || [], byName['CT' + n.ct] || [], byName[n.ct] || []);
       cands = [...new Set(cands)];
       let p = null;
       if (cands.length === 1) p = cands[0];
@@ -486,45 +507,101 @@
         if (!p) p = cands[0];
       } else if (byId[id]) p = byId[id];
       if (p) {
-        pos.set(n, { lat: p.lat, lon: p.lon });
-        if (n.coords) { const mv = haversine(p, n.coords); if (mv > 0.5) avisos.push(`${n.name}: en el KMZ está movido ${mv < 10 ? mv.toFixed(1) : Math.round(mv)} m respecto a la tabla; se usa la posición del KMZ.`); }
-      } else avisos.push(`${n.name}: no aparece en el KMZ (carpeta APOYOS). Su DIST. queda en blanco.`);
+        pto.set(n, p);
+        if (n.coords) { const mv = haversine(p, n.coords); if (mv > 0.5) avisos.push(`${n.name}: movido ${mv < 10 ? mv.toFixed(1).replace('.', ',') : Math.round(mv)} m en el KMZ respecto a la tabla; se usa la posición del KMZ.`); }
+      } else avisos.push(`${n.name}: no aparece en la carpeta APOYOS del KMZ; su DIST. queda en blanco y se usan los datos de la tabla.`);
     });
-    return { pos, avisos };
+    return { pto, avisos };
+  }
+
+  // Orden de gravedad por defecto (más grave primero). ZOBX siempre lo último.
+  const GRAVEDAD_DEFECTO = ['A21X', 'C11X', 'D13X', 'D15X', 'D16X', 'D17X', 'G56X', 'H43X', 'H62X', 'L23X', 'L24X', 'L62X', 'P11X', 'P21X', 'P31X', 'QA1X', 'Q92Y', 'Q91X', 'ZOBX_Q91X', 'ZOBX'];
+  function rangoGravedad(lista) {
+    lista = (lista && lista.length ? lista : GRAVEDAD_DEFECTO).map(x => trim(x).toUpperCase()).filter(Boolean);
+    return code => {
+      const i = lista.indexOf(code); if (i >= 0) return i;
+      if (code === 'ZOBX') return 10000;
+      if (code === 'ZOBX_Q91X') return 9000;
+      return 5000; // código no listado: más grave que ZOBX, menos que los listados
+    };
   }
 
   // ───────────────────────── ANEXO III ─────────────────────────
-  // Devuelve las filas listas para la plantilla y la comprobación de topología contra el KMZ.
-  function buildAnexo(model, kmlData) {
+  // El KMZ modificado manda en: posiciones (DIST.), defectos (código, apoyo, descripción),
+  // observaciones de los apoyos y fotos. Las tablas aportan FECHA, CT, CUADRO, SALIDA, Nº, TIPO, INICIO, FIN y SECCIÓN.
+  function buildAnexo(model, kd, opts) {
+    opts = opts || {};
     const avisos = [], resumen = [];
-    const { pos, avisos: av } = posicionesDesdeKmz(model, kmlData); avisos.push(...av);
+    const { pto, avisos: av } = puntosDesdeKmz(model, kd); avisos.push(...av);
+    const pos = n => pto.get(n) || null;
     const tramoDe = new Map(model.tramos.map(t => [t.row, t]));
-    // Topología KMZ vs tabla
+
+    // Topología: por nombre de la línea (A → B) o por extremos
     const near = (a, b) => haversine(a, b) < 1;
     const usadas = new Set();
     model.tramos.forEach(t => {
-      const A = pos.get(t.a), B = pos.get(t.b); if (!A || !B) return;
-      const L = kmlData.lineas.findIndex((l, i) => !usadas.has(i) && ((near(l.ini, A) && near(l.fin, B)) || (near(l.ini, B) && near(l.fin, A))));
-      if (L < 0) avisos.push(`Topología: el tramo ${t.a.name} → ${t.b.name} de la tabla no tiene una línea equivalente en SALIDAS del KMZ.`);
-      else usadas.add(L);
+      const A = pos(t.a), B = pos(t.b); if (!A || !B) return;
+      const nombres = [`${t.a.code} → ${t.b.code}`, `${t.b.code} → ${t.a.code}`];
+      let L = kd.lineas.findIndex((l, i) => !usadas.has(i) && nombres.includes(l.name.replace(/\s*(->|→)\s*/, ' → ')));
+      if (L < 0) L = kd.lineas.findIndex((l, i) => !usadas.has(i) && ((near(l.ini, A) && near(l.fin, B)) || (near(l.ini, B) && near(l.fin, A))));
+      if (L < 0) avisos.push(`Topología: el tramo ${t.a.name} → ${t.b.name} de la tabla no tiene línea en SALIDAS del KMZ.`);
+      else {
+        usadas.add(L); const l = kd.lineas[L];
+        const ok = (near(l.ini, A) && near(l.fin, B)) || (near(l.ini, B) && near(l.fin, A));
+        if (!ok) resumen.push(`La línea ${t.a.name} → ${t.b.name} no llega exactamente a la posición de los apoyos en el KMZ (¿apoyo movido sin mover la línea?). DIST. se calcula entre apoyos.`);
+      }
     });
-    kmlData.lineas.forEach((l, i) => { if (!usadas.has(i)) avisos.push(`Topología: la línea "${l.name}" del KMZ no corresponde a ningún tramo INICIO/FIN de la tabla.`); });
+    kd.lineas.forEach((l, i) => { if (!usadas.has(i)) avisos.push(`Topología: la línea "${l.name}" del KMZ no corresponde a ningún tramo INICIO/FIN de la tabla.`); });
 
+    // Defectos desde las carpetas ZOBX y DEFECTOS del KMZ
+    const marcas = kd.puntos.filter(p => p.carpeta === 'ZOBX' || p.carpeta === 'DEFECTOS');
+    const defPorNodo = new Map();
+    const conPos = model.nodes.filter(n => pos(n));
+    let fuenteDef = 'KMZ';
+    if (!marcas.length && model.defectos.length) {
+      fuenteDef = 'tablas';
+      avisos.push('El KMZ no tiene marcadores en las carpetas ZOBX ni DEFECTOS: se usan los defectos de las tablas.');
+      model.defectos.forEach(d => { if (!defPorNodo.has(d.node)) defPorNodo.set(d.node, []); defPorNodo.get(d.node).push({ codigo: d.codigo, desc: d.desc, imgs: d.fotos.map(f => 'files/' + f.base) }); });
+    }
+    marcas.forEach(p => {
+      let codigo = trim(p.name).toUpperCase();
+      if (!esCodigoDefecto(codigo)) { const c = campoPopup(p.desc, 'C[oó]digo de defecto'); if (c && esCodigoDefecto(c)) codigo = c.toUpperCase(); }
+      if (!esCodigoDefecto(codigo)) { avisos.push(`Marcador "${p.name}" en ${p.carpeta} sin código de defecto reconocible: se ignora.`); return; }
+      const antes = campoPopup(p.desc, 'Apoyo asociado');
+      const nAntes = antes ? model.nodes.find(n => n.code === antes || n.name === antes) : null;
+      let best = null, bd = Infinity;
+      if (nAntes && nAntes.coords && pos(nAntes) && haversine(p, nAntes.coords) < 1) { best = nAntes; bd = 0; } // marcador sin mover: sigue con su apoyo aunque el apoyo se haya movido
+      else conPos.forEach(n => { const x = haversine(pos(n), p); if (x < bd) { bd = x; best = n; } });
+      if (!best) return;
+      if (bd > 3) avisos.push(`Defecto ${codigo}: el marcador está a ${fmtMiles(bd)} m del apoyo más cercano (${best.name}); se asigna a ese apoyo.`);
+      const desc = campoPopup(p.desc, 'Descripci[oó]n') || '';
+      if (antes && antes !== best.code && antes !== best.name) resumen.push(`Defecto ${codigo} movido en el KMZ: de ${antes} a ${best.esPT ? best.name : best.code}.`);
+      if (!defPorNodo.has(best)) defPorNodo.set(best, []);
+      defPorNodo.get(best).push({ codigo, desc, imgs: p.imgs });
+    });
+    // Defectos de las tablas que ya no están en el KMZ (informativo)
+    if (fuenteDef === 'KMZ') model.defectos.forEach(d => { const l = defPorNodo.get(d.node) || []; if (!l.some(x => x.codigo === d.codigo)) resumen.push(`El defecto ${d.codigo} de ${d.node.esPT ? d.node.name : d.node.code} está en las tablas pero no en el KMZ en ese apoyo: no se pone en el Excel.`); });
+
+    const grav = rangoGravedad(opts.gravedad);
     const filas = model.filas.map(r => {
-      const n = r.node;
+      const n = r.node, p = r === n.row ? pos(n) : null;
       let inicio = trim(r.inicio), fin = trim(r.fin);
       if (!r.esPT && inicio === '' && fin !== '') { inicio = '0'; resumen.push(`INICIO vacío completado a 0 en el apoyo ${r.apoyo} (sale del PT/CT).`); }
       let tipo = normTipo(r.tipo);
       if (tipo == null) { tipo = upperEs(r.tipo); avisos.push(`TIPO "${r.tipo}" (fila ${r.linea}) sin abreviatura conocida: se deja tal cual.`); }
-      // DIST desde el KMZ
       let dist = '';
       const t = tramoDe.get(r);
-      if (!r.esPT && t && !r.sinTramo) {
-        const A = pos.get(t.a), B = pos.get(t.b);
-        if (A && B) dist = Math.round(haversine(A, B));
+      if (!r.esPT && t && !r.sinTramo) { const A = pos(t.a), B = pos(t.b); if (A && B) dist = Math.round(haversine(A, B)); }
+      // Observaciones: las del popup del KMZ si el apoyo está (pueden haberse corregido)
+      let obs = trim(r.obs);
+      if (p) {
+        const o = campoPopup(p.desc, 'Observaciones');
+        const k = o == null ? '' : o;
+        if (k !== obs) resumen.push(`Observaciones del apoyo ${n.esPT ? n.name : r.apoyo} tomadas del KMZ: "${k}"${obs ? ` (tabla: "${obs}")` : ''}.`);
+        obs = k;
       }
-      // Defectos
-      const ds = n.defectos && r === n.row ? n.defectos : [];
+      if (tieneCGP(r.tipo) && !tieneCGP(obs)) { obs = obs ? obs + ' / CON CGP' : 'CON CGP'; resumen.push(`Apoyo ${r.apoyo}: TIPO con CGP/CPM y sin mención en observaciones → añadido "CON CGP".`); }
+      const ds = r === n.row ? (defPorNodo.get(n) || []) : [];
       const codigos = [], q91 = [], descs = [];
       ds.forEach(d => {
         if (d.codigo === 'ZOBX_Q91X') { if (!q91.includes(d.codigo)) q91.push(d.codigo); }
@@ -532,17 +609,67 @@
         const de = trim(d.desc);
         if (de && !descs.some(x => upperEs(x) === upperEs(de))) descs.push(de);
       });
-      let obs = trim(r.obs);
-      if (tieneCGP(r.tipo) && !tieneCGP(obs)) { obs = obs ? obs + ' / CON CGP' : 'CON CGP'; resumen.push(`Apoyo ${r.apoyo}: TIPO con CGP/CPM y sin mención en observaciones → añadido "CON CGP".`); }
+      // FOTO: PT → foto general "_1"; apoyos con defecto → 1ª foto del defecto más grave
+      let foto = null, fotoMotivo = '';
+      if (n.esPT && r === n.row && p) {
+        const re1 = new RegExp('(^|/)' + (n.ct) + '(000000)?_0*1\\.(jpe?g|png)$', 'i');
+        const i1 = p.imgs.find(s => re1.test(decodeURIComponent(s)));
+        if (i1) { foto = i1; fotoMotivo = 'foto general _1 del PT/CT'; }
+        else if (p.imgs.length) { foto = p.imgs[0]; fotoMotivo = 'el PT/CT no tiene foto _1: se pone su primera foto general'; avisos.push(`El PT/CT no tiene foto general "_1" en el KMZ: en FOTO se pone su primera foto (${p.imgs[0].split('/').pop()}).`); }
+      } else if (ds.length) {
+        const conFoto = ds.map((d, i) => ({ d, i })).filter(x => x.d.imgs.length);
+        if (conFoto.length) {
+          conFoto.sort((a, b) => grav(a.d.codigo) - grav(b.d.codigo) || a.i - b.i);
+          foto = conFoto[0].d.imgs[0];
+          fotoMotivo = ds.length > 1 ? `${conFoto[0].d.codigo} (el más grave de ${[...new Set(ds.map(d => d.codigo))].join(', ')})` : conFoto[0].d.codigo;
+        } else avisos.push(`El apoyo ${r.apoyo} tiene defecto (${ds.map(d => d.codigo).join(', ')}) pero ninguna foto del defecto en el KMZ: FOTO queda vacía.`);
+      }
       const partes = [obs].concat(descs).filter(x => trim(x) !== '');
       return {
         fecha: r.fecha, ct: model.ct, cuadro: r.cuadro, salida: r.salida, apoyo: r.apoyo, tipo,
         inicio: r.esPT ? (inicio || '0') : inicio, fin: r.esPT ? (fin || '0') : fin, seccion: r.seccion, dist,
-        defec: codigos.join(' / '), q91x: q91.join(' / '), obs: upperEs(partes.join(' / ')), foto: ''
+        defec: codigos.join(' / '), q91x: q91.join(' / '), obs: upperEs(partes.join(' / ')), foto: '', fotoSrc: foto, fotoMotivo
       };
     });
     const totalDist = filas.reduce((s, f) => s + (f.dist === '' ? 0 : f.dist), 0);
-    return { filas, avisos, resumen, totalDist };
+    return { filas, avisos, resumen, totalDist, fuenteDef };
+  }
+
+  // ───────────────────────── imágenes dentro de celda (como el ANEXO III real) ─────────────────────────
+  // imagenes: [{ ext:'jpeg'|'png' }] en orden; devuelve las partes XML que hay que añadir al xlsx.
+  function anexoRichData(imagenes) {
+    const n = imagenes.length;
+    const metadata = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<metadata xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:xlrd="http://schemas.microsoft.com/office/spreadsheetml/2017/richdata"><metadataTypes count="1"><metadataType name="XLRICHVALUE" minSupportedVersion="120000" copy="1" pasteAll="1" pasteValues="1" merge="1" splitFirst="1" rowColShift="1" clearFormats="1" clearComments="1" assign="1" coerce="1"/></metadataTypes><futureMetadata name="XLRICHVALUE" count="${n}">` +
+      imagenes.map((_, i) => `<bk><extLst><ext uri="{3e2802c4-a4d2-4d8b-9148-e3be6c30e623}"><xlrd:rvb i="${i}"/></ext></extLst></bk>`).join('') +
+      `</futureMetadata><valueMetadata count="${n}">` + imagenes.map((_, i) => `<bk><rc t="1" v="${i}"/></bk>`).join('') + '</valueMetadata></metadata>';
+    const rdrichvalue = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<rvData xmlns="http://schemas.microsoft.com/office/spreadsheetml/2017/richdata" count="${n}">` + imagenes.map((_, i) => `<rv s="0"><v>${i}</v><v>5</v></rv>`).join('') + '</rvData>';
+    const estructura = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<rvStructures xmlns="http://schemas.microsoft.com/office/spreadsheetml/2017/richdata" count="1"><s t="_localImage"><k n="_rvRel:LocalImageIdentifier" t="i"/><k n="CalcOrigin" t="i"/></s></rvStructures>';
+    const tipos = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<rvTypesInfo xmlns="http://schemas.microsoft.com/office/spreadsheetml/2017/richdata2" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="x" xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><global><keyFlags><key name="_Self"><flag name="ExcludeFromFile" value="1"/><flag name="ExcludeFromCalcComparison" value="1"/></key><key name="_DisplayString"><flag name="ExcludeFromCalcComparison" value="1"/></key><key name="_Flags"><flag name="ExcludeFromCalcComparison" value="1"/></key><key name="_Format"><flag name="ExcludeFromCalcComparison" value="1"/></key><key name="_SubLabel"><flag name="ExcludeFromCalcComparison" value="1"/></key><key name="_Attribution"><flag name="ExcludeFromCalcComparison" value="1"/></key><key name="_Icon"><flag name="ExcludeFromCalcComparison" value="1"/></key><key name="_Display"><flag name="ExcludeFromCalcComparison" value="1"/></key><key name="_CanonicalPropertyNames"><flag name="ExcludeFromCalcComparison" value="1"/></key><key name="_ClassificationId"><flag name="ExcludeFromCalcComparison" value="1"/></key></keyFlags></global></rvTypesInfo>';
+    const rels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<richValueRels xmlns="http://schemas.microsoft.com/office/spreadsheetml/2022/richvaluerel" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' + imagenes.map((_, i) => `<rel r:id="rId${i + 1}"/>`).join('') + '</richValueRels>';
+    const relsRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' + imagenes.map((im, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image${i + 1}.${im.ext}"/>`).join('') + '</Relationships>';
+    return {
+      'xl/metadata.xml': metadata, 'xl/richData/rdrichvalue.xml': rdrichvalue, 'xl/richData/rdrichvaluestructure.xml': estructura,
+      'xl/richData/rdRichValueTypes.xml': tipos, 'xl/richData/richValueRel.xml': rels, 'xl/richData/_rels/richValueRel.xml.rels': relsRels
+    };
+  }
+  function anexoContentTypes(ct, exts) {
+    exts.forEach(e => { if (!new RegExp(`Extension="${e}"`, 'i').test(ct)) ct = ct.replace('<Default ', `<Default Extension="${e}" ContentType="image/${e === 'jpg' ? 'jpeg' : e}"/><Default `); });
+    const add = (part, type) => { if (!ct.includes(`PartName="${part}"`)) ct = ct.replace('</Types>', `<Override PartName="${part}" ContentType="${type}"/></Types>`); };
+    add('/xl/metadata.xml', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheetMetadata+xml');
+    add('/xl/richData/richValueRel.xml', 'application/vnd.ms-excel.richvaluerel+xml');
+    add('/xl/richData/rdrichvalue.xml', 'application/vnd.ms-excel.rdrichvalue+xml');
+    add('/xl/richData/rdrichvaluestructure.xml', 'application/vnd.ms-excel.rdrichvaluestructure+xml');
+    add('/xl/richData/rdRichValueTypes.xml', 'application/vnd.ms-excel.rdrichvaluetypes+xml');
+    return ct;
+  }
+  function anexoWorkbookRels(rels) {
+    const add = (type, target) => { if (rels.includes(`Target="${target}"`)) return; let i = 1; while (rels.includes(`Id="rId${i}"`)) i++; rels = rels.replace('</Relationships>', `<Relationship Id="rId${i}" Type="${type}" Target="${target}"/></Relationships>`); };
+    add('http://schemas.openxmlformats.org/officeDocument/2006/relationships/sheetMetadata', 'metadata.xml');
+    add('http://schemas.microsoft.com/office/2017/06/relationships/rdRichValue', 'richData/rdrichvalue.xml');
+    add('http://schemas.microsoft.com/office/2017/06/relationships/rdRichValueStructure', 'richData/rdrichvaluestructure.xml');
+    add('http://schemas.microsoft.com/office/2017/06/relationships/rdRichValueTypes', 'richData/rdRichValueTypes.xml');
+    add('http://schemas.microsoft.com/office/2022/10/relationships/richValueRel', 'richData/richValueRel.xml');
+    return rels;
   }
 
   // Escribe las filas en la hoja de la plantilla (XML), conservando estilos.
@@ -560,6 +687,7 @@
     const rowAttrs = r => (rows[r] || rows[tplLast]).match(/^<row[^>]*?(\/?)>/)[0].replace(/ r="\d+"/, ` r="${r}"`).replace(/\/>$/, '>');
     const cell = (ref, s, v) => {
       if (v === '' || v == null) return `<c r="${ref}" s="${s}"/>`;
+      if (typeof v === 'object' && v.vm) return `<c r="${ref}" s="${s}" t="e" vm="${v.vm}"><v>#VALUE!</v></c>`;
       if (typeof v === 'object' && v.f) return `<c r="${ref}" s="${s}"><f>${v.f}</f><v>${v.v}</v></c>`;
       if (typeof v === 'number' || /^\d+$/.test(String(v).trim())) return `<c r="${ref}" s="${s}"><v>${+v}</v></c>`;
       return `<c r="${ref}" s="${s}" t="inlineStr"><is><t xml:space="preserve">${escXml(v)}</t></is></c>`;
@@ -576,7 +704,7 @@
       let x = rowAttrs(r);
       cols.forEach((c, i) => {
         let v = '';
-        if (f) v = [f.fecha, f.ct, f.cuadro, f.salida, f.apoyo, f.tipo, f.inicio, f.fin, f.seccion, f.dist, f.defec, f.q91x, f.obs, f.foto][i];
+        if (f) v = [f.fecha, f.ct, f.cuadro, f.salida, f.apoyo, f.tipo, f.inicio, f.fin, f.seccion, f.dist, f.defec, f.q91x, f.obs, f.fotoVm ? { vm: f.fotoVm } : f.foto][i];
         if (r === sumRow && c === 'J') v = { f: `SUM(J7:J${lastData})`, v: filas.reduce((s, q) => s + (q.dist === '' ? 0 : q.dist), 0) };
         if (f && c === 'A') v = String(v); // FECHA como texto, igual que el ANEXO III real
         x += cell(c + r, st[c] || '9', v);
@@ -593,7 +721,34 @@
       .replace(/<calcPr ([^>]*?)\/>/, (m, a) => /fullCalcOnLoad/.test(a) ? m : `<calcPr ${a} fullCalcOnLoad="1"/>`);
   }
 
+
+  // Monta el xlsx final sobre la plantilla (objeto JSZip ya cargado).
+  // leerImagen(src) → Promise<Uint8Array|null> con los bytes de la foto referenciada en el KMZ.
+  async function generarAnexoXlsx(tpl, an, ct, leerImagen) {
+    const imgs = []; const porSrc = new Map(); const avisos = [];
+    for (const f of an.filas) {
+      if (!f.fotoSrc) continue;
+      if (porSrc.has(f.fotoSrc)) { f.fotoVm = porSrc.get(f.fotoSrc); continue; }
+      const data = await leerImagen(f.fotoSrc);
+      if (!data) { avisos.push(`No se encuentra en el KMZ la foto ${f.fotoSrc} (apoyo ${f.apoyo}): FOTO queda vacía.`); continue; }
+      const png = data[0] === 0x89 && data[1] === 0x50;
+      imgs.push({ ext: png ? 'png' : 'jpeg', data });
+      f.fotoVm = imgs.length; porSrc.set(f.fotoSrc, imgs.length);
+    }
+    const sx = anexoSheetXml(await tpl.file('xl/worksheets/sheet1.xml').async('string'), an.filas, ct);
+    const last = +sx.match(/<dimension ref="A1:N(\d+)"/)[1];
+    tpl.file('xl/worksheets/sheet1.xml', sx, { createFolders: false });
+    tpl.file('xl/workbook.xml', anexoWorkbookXml(await tpl.file('xl/workbook.xml').async('string'), last), { createFolders: false });
+    if (imgs.length) {
+      imgs.forEach((im, i) => tpl.file(`xl/media/image${i + 1}.${im.ext}`, im.data, { compression: 'STORE', createFolders: false }));
+      const parts = anexoRichData(imgs); Object.keys(parts).forEach(k => tpl.file(k, parts[k], { createFolders: false }));
+      tpl.file('[Content_Types].xml', anexoContentTypes(await tpl.file('[Content_Types].xml').async('string'), [...new Set(imgs.map(i => i.ext))]), { createFolders: false });
+      tpl.file('xl/_rels/workbook.xml.rels', anexoWorkbookRels(await tpl.file('xl/_rels/workbook.xml.rels').async('string')), { createFolders: false });
+    }
+    return { avisos, nFotos: imgs.length };
+  }
+
   const api = { haversine, parseCoords, splitTable, parseMain, parseDefects, buildModel, asociarFotos, buildKml, leyendaFilas, distancias,
-    parseKml, buildAnexo, anexoSheetXml, anexoWorkbookXml, normTipo, claseTipo, tieneCGP, salHex, salName, fmtMiles, pad2, upperEs, excelSerialToDate };
+    parseKml, buildAnexo, anexoSheetXml, anexoWorkbookXml, anexoRichData, anexoContentTypes, anexoWorkbookRels, GRAVEDAD_DEFECTO, generarAnexoXlsx, normTipo, claseTipo, tieneCGP, salHex, salName, fmtMiles, pad2, upperEs, excelSerialToDate };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Core = api;
 })(typeof window !== 'undefined' ? window : globalThis);

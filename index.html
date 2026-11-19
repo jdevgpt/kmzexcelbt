@@ -118,10 +118,15 @@
   <!-- PASO 2 -->
   <section class="card" id="paso2">
     <h2><span class="paso">2</span> Generar ANEXO III</h2>
-    <p class="sub">Descarga el KMZ, haz tus cambios en Google Earth y sube aquí el KMZ modificado. DIST. se calcula con las posiciones de ese KMZ (Haversine, metros enteros); el resto sale de las tablas del paso 1.</p>
+    <p class="sub">Descarga el KMZ, haz tus cambios en Google Earth (mover apoyos, cambiar defectos de sitio, corregir descripciones o fotos) y sube aquí el KMZ modificado. Del KMZ salen las posiciones (DIST.), los defectos, las observaciones y las fotos; de las tablas del paso 1, FECHA, CT, CUADRO, SALIDA, Nº APOYO, TIPO, INICIO, FIN y SECCIÓN.</p>
     <div class="drop" id="dropKmz">Arrastra aquí el KMZ modificado o <u>pulsa para elegir</u></div>
     <input type="file" id="fKmz" accept=".kmz,.kml">
     <div class="fila"><span class="info" id="infoKmz">Ningún KMZ cargado.</span><button class="sec peq" id="btnUsarGenerado" hidden>Usar el KMZ recién generado</button></div>
+    <details style="margin-top:12px"><summary>Columna FOTO y orden de gravedad de defectos</summary>
+      <p class="info" style="margin:6px 0">En FOTO se coloca, dentro de la celda: en el apoyo 0 la foto general <b>_1</b> del PT/CT; en los apoyos con defecto, la primera foto del defecto más grave. Orden de gravedad (de más a menos grave; ZOBX siempre al final):</p>
+      <textarea id="txtGrav" style="min-height:58px;white-space:normal"></textarea>
+      <div class="fila"><button class="sec peq" id="btnGravDef">Restablecer orden por defecto</button></div>
+    </details>
     <div class="acciones"><button id="btnExcel" disabled>Generar ANEXO III</button></div>
     <div id="res2"></div>
   </section>

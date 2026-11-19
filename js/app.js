@@ -1,7 +1,7 @@
 /* Interfaz de KMZ + ANEXO III Red BT */
 (function () {
   'use strict';
-  const APP_VERSION = '1.0.0';
+  const APP_VERSION = '1.1.0';
   const C = window.Core;
   const $ = id => document.getElementById(id);
   const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -187,7 +187,7 @@
       z.file('files/leyenda.png', ley.blob, { compression: 'STORE' });
       for (const [full, base] of nombreDe) z.file('files/' + base, await fotoPor.get(full).leer(), { compression: 'STORE' });
       const blob = await z.generateAsync({ type: 'blob', mimeType: 'application/vnd.google-earth.kmz' });
-      const nombre = `${m.pt ? m.pt.name : 'PT' + m.ct} - RED BT.kmz`;
+      const nombre = `ANEXO I - ${m.ct}.kmz`;
       estado.kmzGenerado = { blob, nombre }; estado.modelo = m;
       descargar(blob, nombre);
       $('btnUsarGenerado').hidden = false; actualizarBtnExcel();
@@ -227,13 +227,29 @@
     $('infoKmz').textContent = 'Usando el KMZ recién generado (sin modificar): ' + estado.kmzGenerado.nombre; actualizarBtnExcel();
   });
 
-  async function leerKml(k) {
-    if (/\.kml$/i.test(k.nombre)) return await k.blob.text();
+  async function leerKmz(k) {
+    if (/\.kml$/i.test(k.nombre)) return { kml: await k.blob.text(), zip: null };
     const z = await JSZip.loadAsync(k.blob);
     const f = z.file('doc.kml') || z.file(/\.kml$/i)[0];
     if (!f) throw new Error('El KMZ no contiene ningún .kml');
-    return await f.async('string');
+    return { kml: await f.async('string'), zip: z };
   }
+  function lectorImagenes(zip) {
+    return async src => {
+      if (!zip) return null;
+      let p = src; try { p = decodeURIComponent(src); } catch (e) {}
+      p = p.replace(/^\.?\//, '');
+      let f = zip.file(p);
+      if (!f) { const base = p.split(/[\\/]/).pop().toLowerCase(); f = zip.file(new RegExp('(^|/)' + base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i'))[0]; }
+      return f ? await f.async('uint8array') : null;
+    };
+  }
+
+  // Orden de gravedad de defectos (para elegir la foto)
+  const LS_GRAV = 'kmzexcelbt.gravedad';
+  $('txtGrav').value = lsGet(LS_GRAV) || C.GRAVEDAD_DEFECTO.join(', ');
+  $('txtGrav').addEventListener('input', () => lsSet(LS_GRAV, $('txtGrav').value));
+  $('btnGravDef').addEventListener('click', () => { $('txtGrav').value = C.GRAVEDAD_DEFECTO.join(', '); lsSet(LS_GRAV, ''); });
 
   $('btnExcel').addEventListener('click', async () => {
     const btn = $('btnExcel'); btn.disabled = true; btn.textContent = 'Generando…';
@@ -241,21 +257,21 @@
       const kmz = estado.kmzModificado || estado.kmzGenerado;
       if (!kmz) throw new Error('Carga primero el KMZ modificado.');
       const m = modeloDesdeTablas(); // siempre desde las tablas guardadas
-      const an = C.buildAnexo(m, C.parseKml(await leerKml(kmz)));
+      const k = await leerKmz(kmz);
+      const an = C.buildAnexo(m, C.parseKml(k.kml), { gravedad: $('txtGrav').value.split(/[\s,;]+/) });
       const tpl = await JSZip.loadAsync(Uint8Array.from(atob(window.ANEXO_TEMPLATE_B64), c => c.charCodeAt(0)));
-      const sx = C.anexoSheetXml(await tpl.file('xl/worksheets/sheet1.xml').async('string'), an.filas, m.ct);
-      const last = +sx.match(/<dimension ref="A1:N(\d+)"/)[1];
-      tpl.file('xl/worksheets/sheet1.xml', sx);
-      tpl.file('xl/workbook.xml', C.anexoWorkbookXml(await tpl.file('xl/workbook.xml').async('string'), last));
+      const gx = await C.generarAnexoXlsx(tpl, an, m.ct, lectorImagenes(k.zip));
+      an.avisos.push(...gx.avisos);
+      if (!k.zip) an.avisos.push('Has subido un .kml: no lleva fotos, así que la columna FOTO queda vacía.');
       const blob = await tpl.generateAsync({ type: 'blob', compression: 'DEFLATE', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
       const nombre = `ANEXO III - ${m.ct}.xlsx`;
       descargar(blob, nombre);
       const conDef = an.filas.filter(f => f.defec || f.q91x);
       let h = `<div class="res"><div class="ok-box">✔ <b>${esc(nombre)}</b> generado y descargado desde <i>${esc(kmz.nombre)}</i>.</div>
-        <div class="chips"><span class="chip">Filas <b>${an.filas.length}</b></span><span class="chip">Con defecto <b>${conDef.length}</b></span><span class="chip">Suma DIST. <b>${C.fmtMiles(an.totalDist)} m</b></span></div>`;
+        <div class="chips"><span class="chip">Filas <b>${an.filas.length}</b></span><span class="chip">Con defecto <b>${conDef.length}</b></span><span class="chip">Suma DIST. <b>${C.fmtMiles(an.totalDist)} m</b></span><span class="chip">Fotos en FOTO <b>${gx.nFotos}</b></span><span class="chip">Defectos leídos de <b>${an.fuenteDef}</b></span></div>`;
       h += an.avisos.length ? `<b class="t-aviso">Avisos (${an.avisos.length})</b>${listaAvisos(an.avisos, 't-aviso')}` : '<div class="t-ok">Topología del KMZ coincide con la tabla. Sin avisos.</div>';
       if (an.resumen.length) h += `<details open><summary>Supuestos aplicados</summary>${listaAvisos(an.resumen, '')}</details>`;
-      h += `<details><summary>Ver filas del ANEXO III</summary><div class="scroll"><table><tr><th>Nº</th><th>TIPO</th><th>INICIO</th><th>FIN</th><th>SECCIÓN</th><th>DIST.</th><th>DEFEC.</th><th>Q91X</th><th>OBSERVACIONES</th></tr>${an.filas.map(f => `<tr><td>${esc(f.apoyo)}</td><td>${esc(f.tipo)}</td><td>${esc(f.inicio)}</td><td>${esc(f.fin)}</td><td>${esc(f.seccion)}</td><td>${f.dist}</td><td>${esc(f.defec)}</td><td>${esc(f.q91x)}</td><td>${esc(f.obs)}</td></tr>`).join('')}</table></div></details></div>`;
+      h += `<details><summary>Ver filas del ANEXO III</summary><div class="scroll"><table><tr><th>Nº</th><th>TIPO</th><th>INICIO</th><th>FIN</th><th>SECCIÓN</th><th>DIST.</th><th>DEFEC.</th><th>Q91X</th><th>OBSERVACIONES</th><th>FOTO</th></tr>${an.filas.map(f => `<tr><td>${esc(f.apoyo)}</td><td>${esc(f.tipo)}</td><td>${esc(f.inicio)}</td><td>${esc(f.fin)}</td><td>${esc(f.seccion)}</td><td>${f.dist}</td><td>${esc(f.defec)}</td><td>${esc(f.q91x)}</td><td>${esc(f.obs)}</td><td>${f.fotoVm ? esc(f.fotoSrc.split('/').pop()) + '<br><span class="info">' + esc(f.fotoMotivo) + '</span>' : ''}</td></tr>`).join('')}</table></div></details></div>`;
       $('res2').innerHTML = h;
     } catch (e) {
       console.error(e); $('res2').innerHTML = `<div class="res"><div class="err-box">${esc(e.message)}</div></div>`;

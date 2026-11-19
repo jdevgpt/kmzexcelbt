@@ -2,10 +2,11 @@
 
 Webapp (GitHub Pages, instalable y sin conexión) que aplica los prompts maestros de red BT:
 
-1. **Generar KMZ** – tabla de posiciones + tabla de defectos/ZOBX (opcional) + ZIP de fotos (opcional) → `PTxxxx - RED BT.kmz`
+1. **Generar KMZ** – tabla de posiciones + tabla de defectos/ZOBX (opcional) + ZIP de fotos (opcional) → `ANEXO I - xxxx.kmz`
    (carpetas APOYOS / SALIDAS / CGP_CPM / ZOBX / DEFECTOS, iconos nativos de Google Earth, fotos embebidas en `files/`, leyenda).
 2. **Generar ANEXO III** – sube el KMZ ya modificado en Google Earth → `ANEXO III - xxxx.xlsx` sobre la plantilla de 14 columnas con Q91X.
-   DIST. se calcula con Haversine sobre las posiciones del KMZ; se avisa si la topología del KMZ no coincide con la tabla.
+   Del KMZ salen posiciones (DIST. por Haversine), defectos (código, apoyo, descripción), observaciones y fotos; se avisa si la topología no coincide con la tabla.
+   En FOTO se coloca dentro de la celda la foto general _1 del PT/CT y, en cada apoyo con defecto, la primera foto del defecto más grave (orden de gravedad editable).
 
 Todo se procesa en el navegador: los datos no salen del equipo.
 
