@@ -1,7 +1,7 @@
 /* Interfaz de KMZ + ANEXO III Red BT */
 (function () {
   'use strict';
-  const APP_VERSION = '1.3.2';
+  const APP_VERSION = '1.4.0';
   const C = window.Core;
   const $ = id => document.getElementById(id);
   const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -9,12 +9,14 @@
   const estado = { fotos: [], kmzGenerado: null, kmzModificado: null, modelo: null };
 
   // ───────── persistencia de las tablas (solo texto) ─────────
-  const LS = { main: 'kmzexcelbt.main', def: 'kmzexcelbt.def', suf: 'kmzexcelbt.suf1' };
+  const LS = { main: 'kmzexcelbt.main', def: 'kmzexcelbt.def', suf: 'kmzexcelbt.suf1', comp: 'kmzexcelbt.comp' };
   const lsGet = k => { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } };
   const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* sin almacenamiento */ } };
   $('txtMain').value = lsGet(LS.main);
   $('txtDef').value = lsGet(LS.def);
   $('chkSuf1').checked = lsGet(LS.suf) === '1';
+  $('txtComp').value = lsGet(LS.comp);
+  $('txtComp').addEventListener('input', () => lsSet(LS.comp, $('txtComp').value));
   const infoTabla = (ta, info) => { const n = C.splitTable(ta.value).length; $(info).textContent = n ? n + ' filas' : ''; };
   [['txtMain', 'infoMain', LS.main], ['txtDef', 'infoDef', LS.def]].forEach(([ta, info, k]) => {
     $(ta).addEventListener('input', () => { lsSet(k, $(ta).value); infoTabla($(ta), info); });
@@ -105,7 +107,7 @@
   $('btnNuevo').addEventListener('click', () => {
     if (!confirm('¿Empezar un proyecto nuevo? Se borra todo lo del proyecto actual: tablas, fotos, KMZ, fotos elegidas para el Excel y el envío pendiente al informe.')) return;
     // pantalla
-    $('txtMain').value = ''; $('txtDef').value = ''; $('chkSuf1').checked = false;
+    $('txtMain').value = ''; $('txtDef').value = ''; $('txtComp').value = ''; $('chkSuf1').checked = false;
     $('res1').innerHTML = ''; $('res2').innerHTML = ''; $('infoMain').textContent = ''; $('infoDef').textContent = '';
     $('infoKmz').textContent = 'Ningún KMZ cargado.'; $('btnUsarGenerado').hidden = true;
     $('fotosPick').innerHTML = '<div class="info">Carga el KMZ modificado para elegir las fotos.</div>';
@@ -116,7 +118,7 @@
     estado.fotos = []; estado.kmzGenerado = null; estado.kmzModificado = null; estado.kmzLeido = null; estado.modelo = null; estado.informe = null;
     clearTimeout(estado.tGrav);
     // memoria del navegador (el orden de gravedad es un ajuste y se conserva)
-    [LS.main, LS.def, LS.suf, 'jdev_kmz_informe'].forEach(k => { try { localStorage.removeItem(k); } catch (e) {} });
+    [LS.main, LS.def, LS.suf, LS.comp, 'jdev_kmz_informe'].forEach(k => { try { localStorage.removeItem(k); } catch (e) {} });
     pintarFotos(); actualizarBtnExcel();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   });
@@ -158,6 +160,7 @@
     const W = 900, H = 420, m0 = 24, s = Math.min((W - 2 * m0) / ((maxx - minx) || 1e-6), (H - 2 * m0) / ((maxy - miny) || 1e-6));
     const px = n => (m0 + (X(n) - minx) * s).toFixed(1), py = n => (m0 + (Y(n) - miny) * s).toFixed(1);
     let g = '';
+    (m.compartidos || []).forEach(c => { const t = c.tramo; g += `<line x1="${px(t.a)}" y1="${py(t.a)}" x2="${px(t.b)}" y2="${py(t.b)}" stroke="${C.salHex(c.salida)}" stroke-width="${2.5 + 3 * c.orden}" stroke-opacity=".55" stroke-linecap="round"><title>${C.salName(c.salida)} comparte ${t.a.name} → ${t.b.name}</title></line>`; });
     m.tramos.forEach(t => { if (t.dist != null) g += `<line x1="${px(t.a)}" y1="${py(t.a)}" x2="${px(t.b)}" y2="${py(t.b)}" stroke="${C.salHex(t.salida)}" stroke-width="2.5"><title>${t.a.name} → ${t.b.name} · ${Math.round(t.dist)} m</title></line>`; });
     pts.forEach(n => {
       const col = n.esPT ? '#e00' : n.clase === 'POST' ? '#7fc8f8' : n.clase === 'GPAL' ? '#00f' : n.cgp ? '#1ea51e' : '#f7d117';
@@ -175,7 +178,7 @@
   function modeloDesdeTablas() {
     const main = C.splitTable($('txtMain').value);
     if (!main.length) throw new Error('Falta la tabla de posiciones.');
-    return C.buildModel(main, C.splitTable($('txtDef').value), {});
+    return C.buildModel(main, C.splitTable($('txtDef').value), { compartidos: $('txtComp').value });
   }
 
   // ───────── PASO 1: KMZ ─────────
@@ -219,7 +222,7 @@
       <span class="chip">Fotos <b>${ph.asociadas}/${ph.total}</b></span><span class="chip">Red total <b>${C.fmtMiles(d.total)} m</b></span></div>`;
     h += m.avisos.length ? `<b class="t-aviso">Avisos (${m.avisos.length})</b>${listaAvisos(m.avisos, 't-aviso')}` : '<div class="t-ok">Sin avisos.</div>';
     if (m.notas.length) h += `<details><summary>Notas (${m.notas.length})</summary>${listaAvisos(m.notas, '')}</details>`;
-    h += `<details><summary>Distancias por salida</summary><table><tr><th>Salida</th><th>Metros (suma de tramos)</th></tr>${Object.entries(d.porSalida).map(([s, v]) => `<tr><td>${s}</td><td>${C.fmtMiles(v)}</td></tr>`).join('')}<tr><th>Total red</th><th>${C.fmtMiles(d.total)}</th></tr></table></details>`;
+    h += `<details><summary>Distancias por salida</summary><table><tr><th>Salida</th><th>Metros (suma de tramos)</th></tr>${Object.entries(d.porSalida).map(([s, v]) => `<tr><td>${s}</td><td>${C.fmtMiles(v)}</td></tr>`).join('')}<tr><th>Total red${(m.compartidos || []).length ? ' (sin contar dos veces los tramos compartidos)' : ''}</th><th>${C.fmtMiles(d.total)}</th></tr></table></details>`;
     if (m.defectos.length) h += `<details><summary>Defectos asignados (${m.defectos.length})</summary><div class="scroll"><table><tr><th>Código</th><th>Descripción</th><th>Apoyo</th><th>Cómo se asoció</th><th>Distancia</th><th>Fotos</th></tr>${m.defectos.map(x => `<tr><td>${esc(x.codigo)}</td><td>${esc(x.desc)}</td><td>${esc(x.node.esPT ? x.node.name : x.node.code)}</td><td>${esc(x.metodo)}</td><td class="${x.lejos ? 't-aviso' : ''}">${x.dist == null ? '' : C.fmtMiles(x.dist) + ' m'}</td><td>${x.fotos.length}</td></tr>`).join('')}</table></div></details>`;
     if (ph.huerfanas.length) h += `<details open><summary class="t-aviso">Fotos sin asociar (${ph.huerfanas.length})</summary>${listaAvisos(ph.huerfanas.map(x => x.nombre + ' — ' + x.motivo), 't-aviso')}</details>`;
     h += vistaPrevia(m) + '</div>';

@@ -112,6 +112,11 @@
       </div>
     </div>
     <div style="margin-top:14px">
+      <label class="t" for="txtComp">Salidas que comparten tramo <span class="opc">(opcional · solo para este proyecto)</span></label>
+      <textarea id="txtComp" style="min-height:62px;white-space:pre-wrap" placeholder="Una indicación por línea. Ejemplos:&#10;0-5 SAL02          → del PT al apoyo 5 también va la SAL02&#10;SAL01 3-8 SAL03    → entre los apoyos 3 y 8 de la SAL01 también va la SAL03&#10;SAL01 1-4 SAL02 SAL03"></textarea>
+      <div class="info">Se dibuja una línea paralela (a 2 m) del color de esa salida sobre los tramos indicados. Pon la salida de origen delante si el número de apoyo se repite en varias salidas.</div>
+    </div>
+    <div style="margin-top:14px">
       <label class="t">Fotografías <span class="opc">(opcional · ZIP o imágenes sueltas, puedes añadir varios)</span></label>
       <div class="drop" id="dropFotos">Arrastra aquí el ZIP de fotos o <u>pulsa para elegir</u></div>
       <input type="file" id="fFotos" accept=".zip,image/*" multiple>
