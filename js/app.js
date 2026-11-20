@@ -1,7 +1,7 @@
 /* Interfaz de KMZ + ANEXO III Red BT */
 (function () {
   'use strict';
-  const APP_VERSION = '1.8.0';
+  const APP_VERSION = '1.8.1';
   const C = window.Core;
   const $ = id => document.getElementById(id);
   const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -19,7 +19,7 @@
   $('txtComp').addEventListener('input', () => { lsSet(LS.comp, $('txtComp').value); clearTimeout(estado.tComp); estado.tComp = setTimeout(() => pintarSecciones(), 600); });
   const infoTabla = (ta, info) => { const n = C.splitTable(ta.value).length; $(info).textContent = n ? n + ' filas' : ''; };
   [['txtMain', 'infoMain', LS.main], ['txtDef', 'infoDef', LS.def]].forEach(([ta, info, k]) => {
-    $(ta).addEventListener('input', () => { lsSet(k, $(ta).value); infoTabla($(ta), info); actualizarBtnExcel(); clearTimeout(estado.tNum); estado.tNum = setTimeout(() => { pintarNumeracion(); pintarSecciones(); marcarFotosSiToca(); }, 500); });
+    $(ta).addEventListener('input', () => { lsSet(k, $(ta).value); infoTabla($(ta), info); actualizarBtnExcel(); clearTimeout(estado.tNum); estado.tNum = setTimeout(() => { pintarNumeracion(); pintarSecciones(); avisarTabla(); marcarFotosSiToca(); }, 500); });
     infoTabla($(ta), info);
   });
   $('chkSuf1').addEventListener('change', () => lsSet(LS.suf, $('chkSuf1').checked ? '1' : ''));
@@ -66,7 +66,7 @@
   [['fMain', 'txtMain', 'infoMain', LS.main], ['fDef', 'txtDef', 'infoDef', LS.def]].forEach(([fi, ta, info, k]) => {
     $(fi).addEventListener('change', async e => {
       const f = e.target.files[0]; if (!f) return;
-      try { $(ta).value = await leerTabla(f); lsSet(k, $(ta).value); infoTabla($(ta), info); $(info).textContent += ' · ' + f.name; pintarNumeracion(); actualizarBtnExcel(); }
+      try { $(ta).value = await leerTabla(f); lsSet(k, $(ta).value); infoTabla($(ta), info); $(info).textContent += ' · ' + f.name; pintarNumeracion(); actualizarBtnExcel(); avisarTabla(); }
       catch (err) { alert('No se pudo leer ' + f.name + ': ' + err.message); }
       e.target.value = '';
     });
@@ -115,7 +115,7 @@
     ['fMain', 'fDef', 'fFotos', 'fKmz'].forEach(id => { $(id).value = ''; });
     // memoria de la página
     if (estado.miniaturas) estado.miniaturas.forEach(u => { if (u) URL.revokeObjectURL(u); });
-    estado.miniaturas = new Map(); estado.fotoElegida = {}; estado.avisoRegenerar = false; estado.fotosMarcadas = false;
+    estado.miniaturas = new Map(); estado.fotoElegida = {}; estado.avisoRegenerar = false; estado.fotosMarcadas = false; estado.tablaAvisada = null;
     estado.fotos = []; estado.kmzGenerado = null; estado.kmzModificado = null; estado.kmzLeido = null; estado.modelo = null; estado.informe = null;
     clearTimeout(estado.tGrav);
     // memoria del navegador (el orden de gravedad es un ajuste y se conserva)
@@ -187,6 +187,18 @@
       localStorage.setItem('jdev_pasos', JSON.stringify(m));
       return true;
     } catch (e) { return false; }
+  }
+  // Al meter la tabla de posiciones se avisa a GestCD para que cree el centro si no lo tiene
+  function avisarTabla() {
+    try {
+      const m = modeloDesdeTablas(); const k = String(m.ct).replace(/^0+(?=\d)/, '');
+      if (estado.tablaAvisada === k) return;
+      const reg = JSON.parse(localStorage.getItem('jdev_pasos') || '{}') || {};
+      const tipo = m.pt && /^CT/i.test(String(m.pt.row.tipo).trim()) ? 'CT' : 'PT';
+      reg[k] = Object.assign({}, reg[k], { tabla: Date.now(), tipo });
+      localStorage.setItem('jdev_pasos', JSON.stringify(reg));
+      estado.tablaAvisada = k;
+    } catch (e) { /* tabla incompleta */ }
   }
   // Marca las fotos en cuanto se conozca el CT (pueden subirse antes que la tabla)
   function marcarFotosSiToca() {
