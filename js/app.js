@@ -1,7 +1,7 @@
 /* Interfaz de KMZ + ANEXO III Red BT */
 (function () {
   'use strict';
-  const APP_VERSION = '1.7.5';
+  const APP_VERSION = '1.8.0';
   const C = window.Core;
   const $ = id => document.getElementById(id);
   const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -19,7 +19,7 @@
   $('txtComp').addEventListener('input', () => { lsSet(LS.comp, $('txtComp').value); clearTimeout(estado.tComp); estado.tComp = setTimeout(() => pintarSecciones(), 600); });
   const infoTabla = (ta, info) => { const n = C.splitTable(ta.value).length; $(info).textContent = n ? n + ' filas' : ''; };
   [['txtMain', 'infoMain', LS.main], ['txtDef', 'infoDef', LS.def]].forEach(([ta, info, k]) => {
-    $(ta).addEventListener('input', () => { lsSet(k, $(ta).value); infoTabla($(ta), info); clearTimeout(estado.tNum); estado.tNum = setTimeout(() => { pintarNumeracion(); pintarSecciones(); }, 500); });
+    $(ta).addEventListener('input', () => { lsSet(k, $(ta).value); infoTabla($(ta), info); actualizarBtnExcel(); clearTimeout(estado.tNum); estado.tNum = setTimeout(() => { pintarNumeracion(); pintarSecciones(); marcarFotosSiToca(); }, 500); });
     infoTabla($(ta), info);
   });
   $('chkSuf1').addEventListener('change', () => lsSet(LS.suf, $('chkSuf1').checked ? '1' : ''));
@@ -66,7 +66,7 @@
   [['fMain', 'txtMain', 'infoMain', LS.main], ['fDef', 'txtDef', 'infoDef', LS.def]].forEach(([fi, ta, info, k]) => {
     $(fi).addEventListener('change', async e => {
       const f = e.target.files[0]; if (!f) return;
-      try { $(ta).value = await leerTabla(f); lsSet(k, $(ta).value); infoTabla($(ta), info); $(info).textContent += ' · ' + f.name; pintarNumeracion(); }
+      try { $(ta).value = await leerTabla(f); lsSet(k, $(ta).value); infoTabla($(ta), info); $(info).textContent += ' · ' + f.name; pintarNumeracion(); actualizarBtnExcel(); }
       catch (err) { alert('No se pudo leer ' + f.name + ': ' + err.message); }
       e.target.value = '';
     });
@@ -95,7 +95,7 @@
         estado.fotos.push({ orig: f.name, nombre: renombrar(f.name), leer: async () => new Uint8Array(await f.arrayBuffer()) });
       }
     }
-    pintarFotos();
+    pintarFotos(); marcarFotosSiToca();
   }
   function pintarFotos() {
     if (estado.mapaListo) pintarNumeracion();
@@ -103,7 +103,7 @@
     $('btnQuitarFotos').hidden = !estado.fotos.length;
   }
   zonaDrop($('dropFotos'), $('fFotos'), anadirFotos);
-  $('btnQuitarFotos').addEventListener('click', () => { estado.fotos = []; pintarFotos(); });
+  $('btnQuitarFotos').addEventListener('click', () => { estado.fotos = []; estado.fotosMarcadas = false; pintarFotos(); });
 
   $('btnNuevo').addEventListener('click', () => {
     if (!confirm('¿Empezar un proyecto nuevo? Se borra todo lo del proyecto actual: tablas, fotos, KMZ, fotos elegidas para el Excel y el envío pendiente al informe.')) return;
@@ -115,7 +115,7 @@
     ['fMain', 'fDef', 'fFotos', 'fKmz'].forEach(id => { $(id).value = ''; });
     // memoria de la página
     if (estado.miniaturas) estado.miniaturas.forEach(u => { if (u) URL.revokeObjectURL(u); });
-    estado.miniaturas = new Map(); estado.fotoElegida = {}; estado.avisoRegenerar = false;
+    estado.miniaturas = new Map(); estado.fotoElegida = {}; estado.avisoRegenerar = false; estado.fotosMarcadas = false;
     estado.fotos = []; estado.kmzGenerado = null; estado.kmzModificado = null; estado.kmzLeido = null; estado.modelo = null; estado.informe = null;
     clearTimeout(estado.tGrav);
     // memoria del navegador (el orden de gravedad es un ajuste y se conserva)
@@ -177,6 +177,27 @@
   const listaAvisos = (arr, cls) => arr.length ? `<ul class="av">${arr.map(a => `<li class="${cls}">${esc(a)}</li>`).join('')}</ul>` : '';
   const descargar = (blob, nombre) => { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = nombre; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000); };
 
+  // Avisa a GestCD (misma web) de que se ha hecho un paso de este centro: 'fotos', 'kmz' o 'excel'
+  function marcarPaso(paso, ct) {
+    try {
+      if (!ct) ct = modeloDesdeTablas().ct;
+      const k = String(ct).trim().toUpperCase().replace(/^0+(?=\d)/, ''); if (!k) return false;
+      const m = JSON.parse(localStorage.getItem('jdev_pasos') || '{}') || {};
+      m[k] = Object.assign({}, m[k], { [paso]: Date.now() });
+      localStorage.setItem('jdev_pasos', JSON.stringify(m));
+      return true;
+    } catch (e) { return false; }
+  }
+  // Marca las fotos en cuanto se conozca el CT (pueden subirse antes que la tabla)
+  function marcarFotosSiToca() {
+    if (!estado.fotos.length || estado.fotosMarcadas) return;
+    if (marcarPaso('fotos')) estado.fotosMarcadas = true;
+  }
+  function resaltar(id) {
+    const el = $(id); el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el.classList.add('on'); setTimeout(() => el.classList.remove('on'), 2500);
+  }
+
   function modeloDesdeTablas() {
     const main = C.splitTable($('txtMain').value);
     if (!main.length) throw new Error('Falta la tabla de posiciones.');
@@ -185,6 +206,7 @@
 
   // ───────── PASO 1: KMZ ─────────
   $('btnKmz').addEventListener('click', async () => {
+    if (!estado.fotos.length && !confirm('No has cargado el ZIP de fotos.\n\n¿Generar el KMZ sin fotos?\n\nAceptar: generar sin fotos · Cancelar: volver para cargarlas')) { resaltar('dropFotos'); return; }
     const btn = $('btnKmz'); btn.disabled = true; btn.textContent = 'Generando…';
     try {
       const m = modeloDesdeTablas();
@@ -206,6 +228,7 @@
       const nombre = `ANEXO I - ${m.ct}.kmz`;
       estado.kmzGenerado = { blob, nombre }; estado.modelo = m; if (estado.avisoRegenerar) { estado.avisoRegenerar = false; pintarNumeracion(); }
       descargar(blob, nombre);
+      marcarPaso('kmz', m.ct); marcarFotosSiToca();
       $('btnUsarGenerado').hidden = false; actualizarBtnExcel();
       pintarRes1(m, ph, nombre);
     } catch (e) {
@@ -232,7 +255,7 @@
   }
 
   // ───────── PASO 2: ANEXO III ─────────
-  function actualizarBtnExcel() { $('btnExcel').disabled = !(estado.kmzModificado || estado.kmzGenerado); }
+  function actualizarBtnExcel() { $('btnExcel').disabled = !$('txtMain').value.trim(); }
   zonaDrop($('dropKmz'), $('fKmz'), files => {
     const f = files.find(x => /\.(kmz|kml)$/i.test(x.name)); if (!f) { alert('Elige un archivo .kmz o .kml'); return; }
     estado.kmzModificado = { blob: f, nombre: f.name };
@@ -300,10 +323,14 @@
   $('btnGravDef').addEventListener('click', () => { $('txtGrav').value = C.GRAVEDAD_DEFECTO.join(', '); lsSet(LS_GRAV, ''); });
 
   $('btnExcel').addEventListener('click', async () => {
+    let kmz = estado.kmzModificado;
+    if (!kmz) {
+      if (!estado.kmzGenerado) { alert('No has subido el KMZ (ANEXO I).\n\nSúbelo para generar el Excel.'); resaltar('dropKmz'); return; }
+      if (!confirm('No has subido el KMZ modificado (ANEXO I).\n\n¿Generar el Excel con el KMZ recién generado, sin los cambios que hayas hecho en Google Earth?\n\nAceptar: generar con el recién generado · Cancelar: volver para subir el modificado')) { resaltar('dropKmz'); return; }
+      kmz = estado.kmzGenerado;
+    }
     const btn = $('btnExcel'); btn.disabled = true; btn.textContent = 'Generando…';
     try {
-      const kmz = estado.kmzModificado || estado.kmzGenerado;
-      if (!kmz) throw new Error('Carga primero el KMZ modificado.');
       const m = modeloDesdeTablas(); // siempre desde las tablas guardadas
       const k = await leerKmz(kmz);
       const an = C.buildAnexo(m, C.parseKml(k.kml), { gravedad: $('txtGrav').value.split(/[\s,;]+/), fotoElegida: estado.fotoElegida });
@@ -314,6 +341,7 @@
       const blob = await tpl.generateAsync({ type: 'blob', compression: 'DEFLATE', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
       const nombre = `ANEXO III - ${m.ct}.xlsx`;
       descargar(blob, nombre);
+      marcarPaso('excel', m.ct);
       const conDef = an.filas.filter(f => f.defec || f.q91x);
       let h = `<div class="res"><div class="ok-box">✔ <b>${esc(nombre)}</b> generado y descargado desde <i>${esc(kmz.nombre)}</i>.</div>
         <div class="chips"><span class="chip">Filas <b>${an.filas.length}</b></span><span class="chip">Con defecto <b>${conDef.length}</b></span><span class="chip">Suma DIST. <b>${C.fmtMiles(an.totalDist)} m</b></span><span class="chip">Fotos en FOTO <b>${gx.nFotos}</b></span><span class="chip">Defectos leídos de <b>${an.fuenteDef}</b></span></div>`;
@@ -529,7 +557,7 @@
     let ct = ''; try { ct = modeloDesdeTablas().ct; } catch (e) {}
     descargar(await z.generateAsync({ type: 'blob' }), `Fotos renombradas${ct ? ' - ' + ct : ''}.zip`);
   }
-  pintarNumeracion(); estado.mapaListo = true;
+  pintarNumeracion(); estado.mapaListo = true; actualizarBtnExcel();
 
   // ───────── PWA y aviso de versión nueva ─────────
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {});

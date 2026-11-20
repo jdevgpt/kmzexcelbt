@@ -1,4 +1,4 @@
-const CACHE = 'kmzexcelbt-1.7.5';
+const CACHE = 'kmzexcelbt-1.8.0';
 const SHELL = ['./', 'index.html', 'js/app.js', 'js/core.js', 'js/template.js', 'vendor/jszip.min.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png'];
 // Siempre se piden a la red saltándose la caché HTTP del navegador (GitHub Pages guarda 10 min);
 // la copia local solo se usa sin conexión.
