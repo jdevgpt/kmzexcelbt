@@ -675,7 +675,7 @@
   function buildKml(model, nameOf, legend) {
     nameOf = nameOf || (f => f.base);
     const ptName = model.pt ? model.pt.name : 'PT' + model.ct;
-    let k = `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2" xmlns:kml="http://www.opengis.net/kml/2.2" xmlns:atom="http://www.w3.org/2005/Atom">\n<Document>\n\t<name>${escXml(ptName)} - RED BT</name>\n\t<open>1</open>\n`;
+    let k = `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2" xmlns:kml="http://www.opengis.net/kml/2.2" xmlns:atom="http://www.w3.org/2005/Atom">\n<Document>\n\t<name>ANEXO I - ${escXml(model.ct)}</name>\n\t<open>1</open>\n`;
     k += styleIcon('sApoyo', ICON('pushpin/ylw-pushpin.png'), HOT_PIN);
     k += styleIcon('sApoyoCGP', ICON('pushpin/grn-pushpin.png'), HOT_PIN);
     k += styleIcon('sPost', ICON('pushpin/ltblu-pushpin.png'), HOT_PIN);
