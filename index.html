@@ -23,6 +23,9 @@
   .cab svg{flex:none}
   .cab h1{margin:0;font-size:21px;letter-spacing:.2px}
   .cab p{margin:2px 0 0;color:#d9dce1;font-size:13.5px}
+  .nuevo-cab{margin-left:auto;flex:none;background:#fff;color:var(--naranja-osc);border:0;font-weight:700;box-shadow:0 2px 6px rgba(0,0,0,.18)}
+  .nuevo-cab:hover{background:var(--naranja-claro)}
+  @media (max-width:560px){.cab{flex-wrap:wrap}.nuevo-cab{margin-left:0;width:100%;justify-content:center}}
   main{max-width:1000px;margin:0 auto;padding:18px 14px 70px}
   .card{background:var(--blanco);border:1px solid var(--gris-3);border-radius:var(--radio);padding:18px;margin-bottom:18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
   .card h2{margin:0 0 4px;font-size:18px;display:flex;align-items:center;gap:10px}
@@ -105,6 +108,7 @@
       <h1>KMZ + ANEXO III · Red BT</h1>
       <p>Paso 1: tablas y fotos → KMZ para Google Earth. Paso 2: KMZ modificado → Excel ANEXO III.</p>
     </div>
+    <button class="nuevo-cab" id="btnNuevo" title="Borra todo y empieza otro centro">＋ Nuevo proyecto</button>
   </div>
 </header>
 
@@ -143,7 +147,6 @@
     </div>
     <div class="acciones">
       <button id="btnKmz">Generar KMZ</button>
-      <button class="sec" id="btnNuevo">Nuevo proyecto</button>
     </div>
     <div id="res1"></div>
   </section>
