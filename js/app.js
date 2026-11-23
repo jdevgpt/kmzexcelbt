@@ -1,7 +1,7 @@
 /* Interfaz de KMZ + ANEXO III Red BT */
 (function () {
   'use strict';
-  const APP_VERSION = '1.9.0';
+  const APP_VERSION = '1.9.1';
   const C = window.Core;
   const $ = id => document.getElementById(id);
   const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -221,7 +221,7 @@
       const g = JSON.parse(localStorage.getItem('gestcd_v1') || 'null');
       const cs = ((g && g.centros) || []).filter(c => String(c.numero).replace(/^0+(?=\d)/, '') === k && c.provincia);
       const c = cs.find(x => !(x.pasos && x.pasos.sharepoint)) || cs[cs.length - 1];
-      if (c) { const p = norm(c.provincia); if (!PROVS.includes(p)) PROVS.push(p); return { nombre: p, origen: 'GestCD' }; }
+      if (c) { const p = norm(c.provincia); if (!PROVS.includes(p)) PROVS.push(p); return { nombre: p, origen: 'GestCD', tecnico: c.operario && c.operario !== 'Sin asignar' ? c.operario : '' }; }
     } catch (e) {}
     try {
       const ib = JSON.parse(localStorage.getItem('ibt_estado') || 'null');
@@ -398,14 +398,14 @@
         $('tituloDoc').textContent = bol ? 'Boletín BT' : 'Informe BT';
         $('btnInforme').textContent = bol ? 'Enviar al Boletín BT' : 'Enviar al Informe BT';
         $('infoDoc').textContent = bol
-          ? 'Abre la app de informes en modo Boletín BT (Málaga) con el centro relleno. Allí revisas dirección y población, pones la foto del ANEXO I y descargas el boletín.'
+          ? 'Abre la app de informes en modo Boletín BT (Málaga) con el centro relleno y el técnico de GestCD. Allí revisas dirección, población y técnico, pones la foto del ANEXO I y descargas Word + PDF.'
           : 'Abre la app de informes con el centro relleno. Allí revisas dirección, población y provincia, pones la foto del ANEXO I y descargas Word + PDF.';
       };
       pintarDoc();
       $('selProv').addEventListener('change', () => { lsSet('kmzexcelbt.prov', $('selProv').value); pintarDoc(); });
       $('btnInforme').addEventListener('click', () => {
         const provincia = $('selProv').value;
-        const datos = Object.assign({}, estado.informe, { provincia, documento: esBoletin(provincia) ? 'boletin' : 'informe' });
+        const datos = Object.assign({}, estado.informe, { provincia, documento: esBoletin(provincia) ? 'boletin' : 'informe', tecnico: provinciaCentro(estado.informe.centro).tecnico || '' });
         try { localStorage.setItem('jdev_kmz_informe', JSON.stringify(datos)); } catch (e) { alert('No se pudo guardar en este navegador'); return; }
         window.open('../InformesConBT/?kmz=1', 'informesconbt');
       });
