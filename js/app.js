@@ -1,7 +1,7 @@
 /* Interfaz de KMZ + ANEXO III Red BT */
 (function () {
   'use strict';
-  const APP_VERSION = '1.8.3';
+  const APP_VERSION = '1.9.0';
   const C = window.Core;
   const $ = id => document.getElementById(id);
   const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -210,6 +210,26 @@
     el.classList.add('on'); setTimeout(() => el.classList.remove('on'), 2500);
   }
 
+  // Provincia del centro: la de GestCD (misma web), o la de la app de informes, o la última elegida
+  const PROVS = ['Badajoz', 'Cáceres', 'Sevilla', 'Málaga', 'Córdoba', 'Huelva', 'Cádiz', 'Granada', 'Jaén', 'Almería'];
+  const sinAcento = t => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toUpperCase();
+  const esBoletin = prov => sinAcento(prov) === 'MALAGA';
+  function provinciaCentro(ct) {
+    const k = String(ct).replace(/^0+(?=\d)/, '');
+    const norm = p => PROVS.find(x => sinAcento(x) === sinAcento(p)) || p;
+    try {
+      const g = JSON.parse(localStorage.getItem('gestcd_v1') || 'null');
+      const cs = ((g && g.centros) || []).filter(c => String(c.numero).replace(/^0+(?=\d)/, '') === k && c.provincia);
+      const c = cs.find(x => !(x.pasos && x.pasos.sharepoint)) || cs[cs.length - 1];
+      if (c) { const p = norm(c.provincia); if (!PROVS.includes(p)) PROVS.push(p); return { nombre: p, origen: 'GestCD' }; }
+    } catch (e) {}
+    try {
+      const ib = JSON.parse(localStorage.getItem('ibt_estado') || 'null');
+      for (const l of (ib && ib.lineas) || []) for (const c of l.centros || []) if (String(c.centro).replace(/^0+(?=\d)/, '') === k && c.provincia) { const p = norm(c.provincia); if (!PROVS.includes(p)) PROVS.push(p); return { nombre: p, origen: 'la app de informes' }; }
+    } catch (e) {}
+    return { nombre: lsGet('kmzexcelbt.prov') || 'Badajoz', origen: '' };
+  }
+
   function modeloDesdeTablas() {
     const main = C.splitTable($('txtMain').value);
     if (!main.length) throw new Error('Falta la tabla de posiciones.');
@@ -359,17 +379,34 @@
         <div class="chips"><span class="chip">Filas <b>${an.filas.length}</b></span><span class="chip">Con defecto <b>${conDef.length}</b></span><span class="chip">Suma DIST. <b>${C.fmtMiles(an.totalDist)} m</b></span><span class="chip">Fotos en FOTO <b>${gx.nFotos}</b></span><span class="chip">Defectos leídos de <b>${an.fuenteDef}</b></span></div>`;
       const inf = an.informe;
       const [fy, fm, fd] = (inf.fecha || '--').split('-');
-      h += `<div class="ok-box" style="background:var(--naranja-claro);border-color:#f3c79c">
-        <b>Informe BT ${esc(inf.centro)}</b> · fecha ${esc(fd + '/' + fm + '/' + fy)} · ${inf.defectos.length ? inf.defectos.length + ' defecto(s) para la tabla (sin ZOBX)' : 'sin defectos (solo había ZOBX)'}
-        <div class="acciones" style="margin-top:8px"><button id="btnInforme">Enviar al Informe BT</button></div>
-        <div class="info">Abre la app de informes con el centro relleno. Allí revisas dirección, población y provincia, pones la foto del ANEXO I y descargas Word + PDF.</div></div>`;
+      const prov = provinciaCentro(inf.centro);
+      h += `<div class="ok-box" id="cajaInforme" style="background:var(--naranja-claro);border-color:#f3c79c">
+        <b id="tituloDoc"></b> ${esc(inf.centro)} · fecha ${esc(fd + '/' + fm + '/' + fy)} · ${inf.defectos.length ? inf.defectos.length + ' defecto(s) para la tabla (sin ZOBX)' : 'sin defectos (solo había ZOBX)'}
+        <div class="acciones" style="margin-top:8px;align-items:center">
+          <label class="info" style="display:flex;gap:6px;align-items:center">Provincia
+            <select id="selProv" style="font:inherit;padding:6px 8px;border:1px solid var(--gris-3);border-radius:8px">${PROVS.map(p => `<option${p === prov.nombre ? ' selected' : ''}>${p}</option>`).join('')}</select></label>
+          <button id="btnInforme"></button></div>
+        <div class="info" id="infoDoc"></div>
+        <div class="info">${prov.origen ? 'Provincia tomada de ' + prov.origen + '.' : 'Elige la provincia del centro (no está en GestCD).'}</div></div>`;
       estado.informe = inf;
       h += an.avisos.length ? `<b class="t-aviso">Avisos (${an.avisos.length})</b>${listaAvisos(an.avisos, 't-aviso')}` : '<div class="t-ok">Topología del KMZ coincide con la tabla. Sin avisos.</div>';
       if (an.resumen.length) h += `<details open><summary>Supuestos aplicados</summary>${listaAvisos(an.resumen, '')}</details>`;
       h += `<details><summary>Ver filas del ANEXO III</summary><div class="scroll"><table><tr><th>Nº</th><th>TIPO</th><th>INICIO</th><th>FIN</th><th>SECCIÓN</th><th>DIST.</th><th>DEFEC.</th><th>Q91X</th><th>OBSERVACIONES</th><th>FOTO</th></tr>${an.filas.map(f => `<tr><td>${esc(f.apoyo)}</td><td>${esc(f.tipo)}</td><td>${esc(f.inicio)}</td><td>${esc(f.fin)}</td><td>${esc(f.seccion)}</td><td>${f.dist}</td><td>${esc(f.defec)}</td><td>${esc(f.q91x)}</td><td>${esc(f.obs)}</td><td>${f.fotoVm ? esc(f.fotoSrc.split('/').pop()) + '<br><span class="info">' + esc(f.fotoMotivo) + '</span>' : ''}</td></tr>`).join('')}</table></div></details></div>`;
       $('res2').innerHTML = h;
+      const pintarDoc = () => {
+        const bol = esBoletin($('selProv').value);
+        $('tituloDoc').textContent = bol ? 'Boletín BT' : 'Informe BT';
+        $('btnInforme').textContent = bol ? 'Enviar al Boletín BT' : 'Enviar al Informe BT';
+        $('infoDoc').textContent = bol
+          ? 'Abre la app de informes en modo Boletín BT (Málaga) con el centro relleno. Allí revisas dirección y población, pones la foto del ANEXO I y descargas el boletín.'
+          : 'Abre la app de informes con el centro relleno. Allí revisas dirección, población y provincia, pones la foto del ANEXO I y descargas Word + PDF.';
+      };
+      pintarDoc();
+      $('selProv').addEventListener('change', () => { lsSet('kmzexcelbt.prov', $('selProv').value); pintarDoc(); });
       $('btnInforme').addEventListener('click', () => {
-        try { localStorage.setItem('jdev_kmz_informe', JSON.stringify(estado.informe)); } catch (e) { alert('No se pudo guardar en este navegador'); return; }
+        const provincia = $('selProv').value;
+        const datos = Object.assign({}, estado.informe, { provincia, documento: esBoletin(provincia) ? 'boletin' : 'informe' });
+        try { localStorage.setItem('jdev_kmz_informe', JSON.stringify(datos)); } catch (e) { alert('No se pudo guardar en este navegador'); return; }
         window.open('../InformesConBT/?kmz=1', 'informesconbt');
       });
     } catch (e) {
