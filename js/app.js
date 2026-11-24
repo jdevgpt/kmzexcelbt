@@ -1,7 +1,7 @@
 /* Interfaz de KMZ + ANEXO III Red BT */
 (function () {
   'use strict';
-  const APP_VERSION = '1.9.2';
+  const APP_VERSION = '1.9.3';
   const C = window.Core;
   const $ = id => document.getElementById(id);
   const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -279,7 +279,7 @@
       <span class="chip">Fotos <b>${ph.asociadas}/${ph.total}</b></span><span class="chip">Red total <b>${C.fmtMiles(d.total)} m</b></span></div>`;
     h += m.avisos.length ? `<b class="t-aviso">Avisos (${m.avisos.length})</b>${listaAvisos(m.avisos, 't-aviso')}` : '<div class="t-ok">Sin avisos.</div>';
     if (m.notas.length) h += `<details><summary>Notas (${m.notas.length})</summary>${listaAvisos(m.notas, '')}</details>`;
-    h += `<details><summary>Distancias por salida</summary><table><tr><th>Salida</th><th>Metros (suma de tramos)</th></tr>${Object.entries(d.porSalida).map(([s, v]) => `<tr><td>${s}</td><td>${C.fmtMiles(v)}</td></tr>`).join('')}<tr><th>Total red${(m.compartidos || []).length ? ' (sin contar dos veces los tramos compartidos)' : ''}</th><th>${C.fmtMiles(d.total)}</th></tr></table></details>`;
+    h += `<details><summary>Distancias por salida</summary><table><tr><th>Salida</th><th>Metros (suma de tramos)</th></tr>${Object.entries(d.porSalida).map(([s, v]) => `<tr><td>${s}</td><td>${C.fmtMiles(v)}</td></tr>`).join('')}<tr><th>Total red${(m.compartidos || []).length ? ' (los tramos compartidos cuentan una vez por cada línea)' : ''}</th><th>${C.fmtMiles(d.total)}</th></tr></table></details>`;
     if (m.defectos.length) h += `<details><summary>Defectos asignados (${m.defectos.length})</summary><div class="scroll"><table><tr><th>Código</th><th>Descripción</th><th>Apoyo</th><th>Cómo se asoció</th><th>Distancia</th><th>Fotos</th></tr>${m.defectos.map(x => `<tr><td>${esc(x.codigo)}</td><td>${esc(x.desc)}</td><td>${esc(x.node.esPT ? x.node.name : x.node.code)}</td><td>${esc(x.metodo)}</td><td class="${x.lejos ? 't-aviso' : ''}">${x.dist == null ? '' : C.fmtMiles(x.dist) + ' m'}</td><td>${x.fotos.length}</td></tr>`).join('')}</table></div></details>`;
     if (ph.huerfanas.length) h += `<details open><summary class="t-aviso">Fotos sin asociar (${ph.huerfanas.length})</summary>${listaAvisos(ph.huerfanas.map(x => x.nombre + ' — ' + x.motivo), 't-aviso')}</details>`;
     h += vistaPrevia(m) + '</div>';

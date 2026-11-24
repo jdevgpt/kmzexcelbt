@@ -744,7 +744,7 @@
   function distancias(model) {
     const porSalida = {}; let total = 0;
     model.tramos.forEach(t => { if (t.dist == null) return; const g = salName(t.salida); porSalida[g] = (porSalida[g] || 0) + t.dist; total += t.dist; });
-    (model.compartidos || []).forEach(c => { const g = salName(c.salida); porSalida[g] = (porSalida[g] || 0) + c.tramo.dist; });
+    (model.compartidos || []).forEach(c => { if (c.tramo.dist == null) return; const g = salName(c.salida); porSalida[g] = (porSalida[g] || 0) + c.tramo.dist; total += c.tramo.dist; }); // cada línea que va por un tramo compartido cuenta sus metros
     (model.adicionales || []).forEach(x => { const g = salName(x.salida); porSalida[g] = (porSalida[g] || 0) + x.dist; total += x.dist; });
     return { porSalida, total };
   }
