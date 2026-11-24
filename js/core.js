@@ -858,8 +858,7 @@
     const porCode = new Map(ap.filter(a => a.code).map(a => [a.code, a]));
     const cerca = q => { let best = null, bd = 4; ap.forEach(a => { const d = haversine(a.p, q); if (d < bd) { bd = d; best = a; } }); return best; };
     const lineas = kd.lineas.filter(l => (l.carpeta === 'SALIDAS' || !kd.lineas.some(x => x.carpeta === 'SALIDAS')) && !/\((compartido|recorrido)/i.test(l.name));
-    let compartidos = 0;
-    kd.lineas.filter(l => /\((compartido|recorrido)/i.test(l.name)).forEach(l => { compartidos += l.largo; });
+    const lineasComp = kd.lineas.filter(l => /\((compartido|recorrido)/i.test(l.name));
     const aristas = [];
     lineas.forEach(l => {
       const nm = l.name.split(/\s*(?:->|→)\s*/);
@@ -883,6 +882,19 @@
       }
       resto.forEach(e => { if (!e.A.padre && !e.B.padre && !e.A.esPT && !e.B.esPT) { e.B.padre = e.A; } });
     }
+    // Circuitos dobles/triples: cada línea compartida se suma al tramo (padre → apoyo) por el que va
+    let compartidos = 0; const circuitos = {};
+    const resCode = x => { x = trim(x); if (porCode.has(x)) return porCode.get(x); if (pt && (/^(PT|CT)\s*\d+$/i.test(x) || x === pt.ct || x === pt.ct + '000000')) return pt; return null; };
+    lineasComp.forEach(l => {
+      const nm = l.name.replace(/\s*\((compartido|recorrido)[^)]*\)\s*$/i, '').split(/\s*(?:->|→)\s*/);
+      let A = nm.length === 2 ? resCode(nm[0]) : null, B = nm.length === 2 ? resCode(nm[1]) : null;
+      if (!A || !B) { A = cerca(l.ini); B = cerca(l.fin); }
+      const hijo = A && B ? (B.padre === A ? B : A.padre === B ? A : null) : null;
+      if (!hijo) { compartidos += l.largo; avisos.push(`La línea compartida "${l.name}" no coincide con ningún tramo entre dos apoyos: sus ${Math.round(l.largo)} m se suman aparte al total.`); return; }
+      const k = `${+hijo.cuadro}|${+hijo.salida}|${+hijo.apoyo}`;
+      const c = circuitos[k] || (circuitos[k] = { n: 1, extra: 0 });
+      c.n++; c.extra += l.largo;
+    });
     const orden = a => [+a.cuadro, +a.salida, +a.apoyo];
     ap.sort((x, y) => { const a = orden(x), b = orden(y); return a[0] - b[0] || a[1] - b[1] || a[2] - b[2]; });
     const sinTramo = ap.filter(a => !a.esPT && !a.padre);
@@ -890,7 +902,7 @@
     const rows = ap.map(a => [fecha || '', a.ct, a.cuadro, a.salida, a.apoyo, a.tipo,
       a.esPT ? '0' : (a.padre ? (a.padre.esPT ? '0' : a.padre.apoyo) : ''), a.esPT ? '0' : (a.padre ? a.apoyo : ''),
       a.seccion, '', a.obs, '', '', `${a.p.lat}, ${a.p.lon}`]);
-    return { rows, avisos, compartidos, ct: pt ? pt.ct : (ap[0] && ap[0].ct) || '' };
+    return { rows, avisos, compartidos, circuitos, ct: pt ? pt.ct : (ap[0] && ap[0].ct) || '' };
   }
 
   // Punto del KMZ (carpeta APOYOS) que corresponde a cada nodo de la tabla
@@ -1001,8 +1013,18 @@
       const t = tramoDe.get(r);
       if (!r.esPT && t && !r.sinTramo) {
         const A = pos(t.a), B = pos(t.b);
-        if (opts.metrosLinea && lineaDe.has(t)) dist = Math.round(lineaDe.get(t).largo); // metros reales de la línea dibujada (con sus vértices)
-        else if (A && B) dist = Math.round(haversine(A, B));
+        let d = null;
+        if (opts.metrosLinea && lineaDe.has(t)) d = lineaDe.get(t).largo; // metros reales de la línea dibujada (con sus vértices)
+        else if (A && B) d = haversine(A, B);
+        if (d != null) {
+          // Circuitos dobles/triples: por el tramo van también otras salidas → se suman sus metros
+          const kc = `${+r.cuadro}|${+r.salida}|${+r.apoyo}`;
+          const ck = opts.circuitos && opts.circuitos[kc];
+          const nComp = (model.compartidos || []).filter(c => c.tramo === t).length;
+          if (ck) { d += ck.extra; resumen.push(`Apoyo ${r.apoyo} (${salName(+r.salida)}): tramo con ${ck.n} circuitos, DIST. = suma de las ${ck.n} líneas.`); }
+          else if (nComp) { d *= 1 + nComp; resumen.push(`Apoyo ${r.apoyo} (${salName(+r.salida)}): tramo con ${1 + nComp} circuitos, DIST. × ${1 + nComp}.`); }
+          dist = d; // se redondea al final, de forma que la suma cuadre con el total sin decimales
+        }
       }
       // Observaciones: las del popup del KMZ si el apoyo está (pueden haberse corregido)
       let obs = trim(r.obs);
@@ -1052,6 +1074,9 @@
         defec: codigos.join(' / '), q91x: q91.join(' / '), obs: upperEs(partes.join(' / ')), foto: '', fotoSrc: foto, fotoMotivo
       };
     });
+    // Redondeo acumulado: cada DIST. se redondea a metros pero la suma de la columna = total real redondeado
+    let acum = 0, acumR = 0;
+    filas.forEach(f => { if (f.dist === '') return; acum += f.dist; const r = Math.round(acum); f.dist = r - acumR; acumR = r; });
     const totalDist = filas.reduce((s, f) => s + (f.dist === '' ? 0 : f.dist), 0);
     // Datos para la app de informes: todos los defectos menos ZOBX, en orden de apoyos
     const defectosInforme = [];

@@ -1,7 +1,7 @@
 /* Interfaz de KMZ + ANEXO III Red BT */
 (function () {
   'use strict';
-  const APP_VERSION = '1.11.1';
+  const APP_VERSION = '1.12.0';
   const C = window.Core;
   const $ = id => document.getElementById(id);
   const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -365,7 +365,7 @@
     }
     if (files.length > 1) h += `<div class="ok-box">Suma de los ${files.length} KMZ: <b>${C.fmtMiles(Math.round(suma))} m</b></div>`;
     if (estado.metros.some(x => x.ct)) h += `<div class="acciones"><button id="btnAnexoMetros">Generar ANEXO III de los marcados</button></div>
-      <p class="info">El ANEXO III se monta solo con el KMZ: apoyos, secciones, observaciones y defectos de sus popups, INICIO/FIN de las líneas y DIST. con los metros reales de cada línea dibujada. El total suma también las líneas de tramos compartidos. La foto de cada fila es la que elegiría la app (foto _1 del PT y 1ª foto del defecto más grave).</p><div id="resAnexoMetros"></div>`;
+      <p class="info">El ANEXO III se monta solo con el KMZ: apoyos, secciones, observaciones y defectos de sus popups, INICIO/FIN de las líneas y DIST. con los metros reales de cada línea dibujada. En los tramos por los que van dos o más salidas (circuito doble) la DIST. lleva los metros de todas sus líneas, así que el total cuadra con el KMZ. La foto de cada fila es la que elegiría la app (foto _1 del PT y 1ª foto del defecto más grave).</p><div id="resAnexoMetros"></div>`;
     out.innerHTML = h; $('btnLimpiarMetros').hidden = false;
   });
   $('btnLimpiarMetros').addEventListener('click', () => { estado.metros = []; $('resMetros').innerHTML = ''; $('fMetros').value = ''; $('btnLimpiarMetros').hidden = true; });
@@ -383,7 +383,7 @@
         const kd = C.parseKml(it.k.kml);
         const t = C.tablaDesdeKmz(kd, isoADmy(d.querySelector('.m-fecha').value));
         const mod = C.buildModel(t.rows, [], {});
-        const an = C.buildAnexo(mod, kd, { gravedad: $('txtGrav').value.split(/[\s,;]+/), metrosLinea: true });
+        const an = C.buildAnexo(mod, kd, { gravedad: $('txtGrav').value.split(/[\s,;]+/), metrosLinea: true, circuitos: t.circuitos });
         an.extraTotal = t.compartidos;
         const tpl = await JSZip.loadAsync(Uint8Array.from(atob(window.ANEXO_TEMPLATE_B64), c => c.charCodeAt(0)));
         const gx = await C.generarAnexoXlsx(tpl, an, mod.ct, lectorImagenes(it.k.zip));
@@ -392,7 +392,8 @@
         descargar(blob, nombre); await new Promise(r => setTimeout(r, 400));
         const avisos = t.avisos.concat(mod.avisos, an.avisos, gx.avisos);
         const tot = an.totalDist + Math.round(t.compartidos);
-        h += `<div class="ok-box">✔ <b>${esc(nombre)}</b>: ${an.filas.length} filas · total <b>${C.fmtMiles(tot)} m</b>${t.compartidos ? ` (${C.fmtMiles(an.totalDist)} m de tramos + ${C.fmtMiles(Math.round(t.compartidos))} m de líneas compartidas)` : ''}</div>` +
+        const dobles = Object.keys(t.circuitos).length, medido = C.medirKml(it.k.kml).total;
+        h += `<div class="ok-box">✔ <b>${esc(nombre)}</b>: ${an.filas.length} filas · total <b>${C.fmtMiles(tot)} m</b> (KMZ: ${C.fmtMiles(Math.round(medido))} m)${dobles ? ` · ${dobles} tramo${dobles === 1 ? '' : 's'} con circuito doble o más, con sus metros multiplicados` : ''}</div>` +
           (avisos.length ? listaAvisos(avisos, 't-aviso') : '');
       } catch (er) { h += `<div class="err-box">${esc(it.nombre)}: ${esc(er.message)}</div>`; }
     }
