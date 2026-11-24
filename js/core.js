@@ -781,7 +781,14 @@
       const pc = body.match(/<Point>[\s\S]*?<coordinates>([\s\S]*?)<\/coordinates>/);
       const lc = body.match(/<LineString>[\s\S]*?<coordinates>([\s\S]*?)<\/coordinates>/);
       if (pc) { const p = num(pc[1])[0]; if (p) puntos.push({ carpeta, id: idm ? idm[1] : '', name, lat: p[1], lon: p[0], desc, imgs: imgsPopup(desc) }); }
-      else if (lc) { const ps = num(lc[1]); if (ps.length >= 2) lineas.push({ carpeta, name, ini: { lat: ps[0][1], lon: ps[0][0] }, fin: { lat: ps[ps.length - 1][1], lon: ps[ps.length - 1][0] } }); }
+      else if (lc) {
+        const ps = num(lc[1]);
+        if (ps.length >= 2) {
+          let largo = 0; for (let i = 1; i < ps.length; i++) largo += haversine({ lat: ps[i - 1][1], lon: ps[i - 1][0] }, { lat: ps[i][1], lon: ps[i][0] });
+          const sub = stack.length ? stack[stack.length - 1] : '';
+          lineas.push({ carpeta, sub, name, largo, ini: { lat: ps[0][1], lon: ps[0][0] }, fin: { lat: ps[ps.length - 1][1], lon: ps[ps.length - 1][0] } });
+        }
+      }
     }
     return { puntos, lineas };
   }
@@ -817,6 +824,73 @@
       grupos.set(carpeta, g); total += d; n++;
     }
     return { grupos: [...grupos.values()], total, lineas: n, compartidas };
+  }
+
+
+  // ───────── ANEXO III solo desde un KMZ (comprobador de metros) ─────────
+  // Reconstruye la tabla de posiciones con lo que llevan los popups de APOYOS (tipo, PT/CT, cuadro, salida, nº, sección,
+  // observaciones) y la topología de las líneas de SALIDAS (INICIO/FIN). La FECHA no está en el KMZ: la pone el usuario.
+  function tablaDesdeKmz(kd, fecha) {
+    const avisos = [];
+    const conCarpeta = kd.puntos.some(p => p.carpeta === 'APOYOS');
+    const pts = kd.puntos.filter(p => conCarpeta ? p.carpeta === 'APOYOS' : !['CGP_CPM', 'ZOBX', 'DEFECTOS'].includes(p.carpeta));
+    const ap = [];
+    pts.forEach(p => {
+      const g = k => { const v = campoPopup(p.desc, k); return v == null ? '' : v; };
+      const tipo = g('Tipo de apoyo');
+      let ct = g('PT\\/CT'), cuadro = g('Cuadro'), salida = g('Salida').replace(/^SAL(IDA)?\s*/i, ''), apoyo = g('N[ºo°]\\s*apoyo');
+      const code = (p.name.match(/^\d{9,}$/) || [''])[0];
+      const esPT = /^(PT|CT)/i.test(deaccent(tipo).trim()) || /^(PT|CT)\s*\d+$/i.test(p.name);
+      if (code && !esPT) { ct = ct || code.slice(0, -6); cuadro = cuadro || String(+code.slice(-6, -4)); salida = salida || String(+code.slice(-4, -2)); apoyo = apoyo || String(+code.slice(-2)); }
+      if (esPT) { ct = ct || p.name.replace(/\D/g, ''); cuadro = '0'; salida = '0'; apoyo = '0'; }
+      if (!ct || apoyo === '') { avisos.push(`El punto "${p.name}" de APOYOS no tiene datos de apoyo (CT, cuadro, salida, nº): se ignora.`); return; }
+      ap.push({ p, esPT, ct, cuadro: String(+cuadro || 0), salida: String(+salida || 0), apoyo: String(+apoyo || 0), tipo: tipo || (esPT ? 'PT_CD' : ''),
+        seccion: g('Secci[oó]n'), obs: g('Observaciones'), code: esPT ? null : code, padre: null, hijos: [] });
+    });
+    const pt = ap.find(a => a.esPT);
+    if (!pt) avisos.push('El KMZ no tiene el punto del PT/CT en APOYOS: los tramos que salen del PT no se pueden enlazar.');
+    // CGP/CPM: marcador en CGP_CPM junto al apoyo → el TIPO lleva "CGP CPM"
+    kd.puntos.filter(p => p.carpeta === 'CGP_CPM').forEach(c => {
+      let best = null, bd = 3; ap.forEach(a => { const d = haversine(a.p, c); if (d < bd) { bd = d; best = a; } });
+      if (best && !/CGP|CPM/i.test(best.tipo)) best.tipo = (best.tipo + ' CGP CPM').trim();
+    });
+    // Aristas: líneas de SALIDAS que no son de tramos compartidos/recorridos
+    const porCode = new Map(ap.filter(a => a.code).map(a => [a.code, a]));
+    const cerca = q => { let best = null, bd = 4; ap.forEach(a => { const d = haversine(a.p, q); if (d < bd) { bd = d; best = a; } }); return best; };
+    const lineas = kd.lineas.filter(l => (l.carpeta === 'SALIDAS' || !kd.lineas.some(x => x.carpeta === 'SALIDAS')) && !/\((compartido|recorrido)/i.test(l.name));
+    let compartidos = 0;
+    kd.lineas.filter(l => /\((compartido|recorrido)/i.test(l.name)).forEach(l => { compartidos += l.largo; });
+    const aristas = [];
+    lineas.forEach(l => {
+      const nm = l.name.split(/\s*(?:->|→)\s*/);
+      let A = null, B = null, dirigida = false;
+      if (nm.length === 2) {
+        const res = x => /^(PT|CT)?\s*\d+$/i.test(x) && pt && (x.replace(/\D/g, '') === pt.ct || /^\d+0{6}$/.test(x) && x.slice(0, -6) === pt.ct || /^(PT|CT)/i.test(x)) && !porCode.has(x) ? pt : porCode.get(x) || null;
+        A = res(nm[0].trim()); B = res(nm[1].trim()); dirigida = !!(A && B);
+      }
+      if (!A || !B) { A = cerca(l.ini); B = cerca(l.fin); }
+      if (!A || !B || A === B) { avisos.push(`La línea "${l.name || 'sin nombre'}" no une dos apoyos del KMZ: se mide para el total pero no entra en la tabla.`); return; }
+      aristas.push({ A, B, dirigida, l });
+    });
+    // Orientación: por el nombre «A → B»; si no, desde el PT hacia fuera (recorrido en anchura)
+    aristas.filter(e => e.dirigida).forEach(e => { if (!e.B.padre) e.B.padre = e.A; else avisos.push(`El apoyo ${e.B.code || e.B.p.name} tiene dos líneas que llegan a él: se usa la primera.`); });
+    const resto = aristas.filter(e => !e.dirigida);
+    if (resto.length) {
+      const vis = new Set(ap.filter(a => a.padre || a.esPT)); const cola = [...vis];
+      while (cola.length) {
+        const x = cola.shift();
+        resto.forEach(e => { const y = e.A === x ? e.B : e.B === x ? e.A : null; if (y && !vis.has(y) && !y.padre) { y.padre = x; vis.add(y); cola.push(y); } });
+      }
+      resto.forEach(e => { if (!e.A.padre && !e.B.padre && !e.A.esPT && !e.B.esPT) { e.B.padre = e.A; } });
+    }
+    const orden = a => [+a.cuadro, +a.salida, +a.apoyo];
+    ap.sort((x, y) => { const a = orden(x), b = orden(y); return a[0] - b[0] || a[1] - b[1] || a[2] - b[2]; });
+    const sinTramo = ap.filter(a => !a.esPT && !a.padre);
+    if (sinTramo.length) avisos.push(`Sin línea que llegue a ${sinTramo.length === 1 ? 'el apoyo' : 'los apoyos'} ${sinTramo.map(a => a.apoyo + ' (' + salName(+a.salida) + ')').join(', ')}: quedan sin DIST.`);
+    const rows = ap.map(a => [fecha || '', a.ct, a.cuadro, a.salida, a.apoyo, a.tipo,
+      a.esPT ? '0' : (a.padre ? (a.padre.esPT ? '0' : a.padre.apoyo) : ''), a.esPT ? '0' : (a.padre ? a.apoyo : ''),
+      a.seccion, '', a.obs, '', '', `${a.p.lat}, ${a.p.lon}`]);
+    return { rows, avisos, compartidos, ct: pt ? pt.ct : (ap[0] && ap[0].ct) || '' };
   }
 
   // Punto del KMZ (carpeta APOYOS) que corresponde a cada nodo de la tabla
@@ -871,7 +945,7 @@
 
     // Topología: por nombre de la línea (A → B) o por extremos
     const near = (a, b) => haversine(a, b) < 1;
-    const usadas = new Set();
+    const usadas = new Set(), lineaDe = new Map();
     model.tramos.forEach(t => {
       const A = pos(t.a), B = pos(t.b); if (!A || !B) return;
       const nombres = [`${t.a.code} → ${t.b.code}`, `${t.b.code} → ${t.a.code}`];
@@ -879,7 +953,7 @@
       if (L < 0) L = kd.lineas.findIndex((l, i) => !usadas.has(i) && !/\((compartido|recorrido)/i.test(l.name) && ((haversine(l.ini, A) < 4 && haversine(l.fin, B) < 4) || (haversine(l.ini, B) < 4 && haversine(l.fin, A) < 4)));
       if (L < 0) avisos.push(`Topología: el tramo ${t.a.name} → ${t.b.name} de la tabla no tiene línea en SALIDAS del KMZ.`);
       else {
-        usadas.add(L); const l = kd.lineas[L];
+        usadas.add(L); const l = kd.lineas[L]; lineaDe.set(t, l);
         const cerca = (p, q) => haversine(p, q) < 4; // las líneas de tramos compartidos van desplazadas hasta 1,5 m
         const ok = (cerca(l.ini, A) && cerca(l.fin, B)) || (cerca(l.ini, B) && cerca(l.fin, A));
         if (!ok) resumen.push(`La línea ${t.a.name} → ${t.b.name} no llega exactamente a la posición de los apoyos en el KMZ (¿apoyo movido sin mover la línea?). DIST. se calcula entre apoyos.`);
@@ -925,7 +999,11 @@
       if (tipo == null) { tipo = upperEs(r.tipo); avisos.push(`TIPO "${r.tipo}" (fila ${r.linea}) sin abreviatura conocida: se deja tal cual.`); }
       let dist = '';
       const t = tramoDe.get(r);
-      if (!r.esPT && t && !r.sinTramo) { const A = pos(t.a), B = pos(t.b); if (A && B) dist = Math.round(haversine(A, B)); }
+      if (!r.esPT && t && !r.sinTramo) {
+        const A = pos(t.a), B = pos(t.b);
+        if (opts.metrosLinea && lineaDe.has(t)) dist = Math.round(lineaDe.get(t).largo); // metros reales de la línea dibujada (con sus vértices)
+        else if (A && B) dist = Math.round(haversine(A, B));
+      }
       // Observaciones: las del popup del KMZ si el apoyo está (pueden haberse corregido)
       let obs = trim(r.obs);
       if (p) {
@@ -1027,7 +1105,7 @@
   }
 
   // Escribe las filas en la hoja de la plantilla (XML), conservando estilos.
-  function anexoSheetXml(sheetXml, filas, ct) {
+  function anexoSheetXml(sheetXml, filas, ct, extraTotal) {
     const rowRe = /<row r="(\d+)"[^>]*>([\s\S]*?)<\/row>|<row r="(\d+)"[^>]*\/>/g;
     const rows = {}; let m;
     while ((m = rowRe.exec(sheetXml))) rows[+(m[1] || m[3])] = m[0];
@@ -1059,7 +1137,7 @@
       cols.forEach((c, i) => {
         let v = '';
         if (f) v = [f.fecha, f.ct, f.cuadro, f.salida, f.apoyo, f.tipo, f.inicio, f.fin, f.seccion, f.dist, f.defec, f.q91x, f.obs, f.fotoVm ? { vm: f.fotoVm } : f.foto][i];
-        if (r === sumRow && c === 'J') v = { f: `SUM(J7:J${lastData})`, v: filas.reduce((s, q) => s + (q.dist === '' ? 0 : q.dist), 0) };
+        if (r === sumRow && c === 'J') { const ex = Math.round(extraTotal || 0); v = { f: `SUM(J7:J${lastData})` + (ex ? '+' + ex : ''), v: filas.reduce((s, q) => s + (q.dist === '' ? 0 : q.dist), 0) + ex }; }
         if (f && c === 'A') v = String(v); // FECHA como texto, igual que el ANEXO III real
         x += cell(c + r, st[c] || '9', v);
       });
@@ -1089,7 +1167,7 @@
       imgs.push({ ext: png ? 'png' : 'jpeg', data });
       f.fotoVm = imgs.length; porSrc.set(f.fotoSrc, imgs.length);
     }
-    const sx = anexoSheetXml(await tpl.file('xl/worksheets/sheet1.xml').async('string'), an.filas, ct);
+    const sx = anexoSheetXml(await tpl.file('xl/worksheets/sheet1.xml').async('string'), an.filas, ct, an.extraTotal);
     const last = +sx.match(/<dimension ref="A1:N(\d+)"/)[1];
     tpl.file('xl/worksheets/sheet1.xml', sx, { createFolders: false });
     tpl.file('xl/workbook.xml', anexoWorkbookXml(await tpl.file('xl/workbook.xml').async('string'), last), { createFolders: false });
@@ -1102,7 +1180,7 @@
     return { avisos, nFotos: imgs.length };
   }
 
-  const api = { medirKml, numeracionSeguida, SECCIONES, filasSecciones, editarTabla, normSeccion, analizarNumeracion, propuestaCompactar, propuestaCambio, renumerar, haversine, parseCoords, splitTable, parseMain, parseDefects, buildModel, asociarFotos, buildKml, leyendaFilas, distancias,
+  const api = { medirKml, tablaDesdeKmz, numeracionSeguida, SECCIONES, filasSecciones, editarTabla, normSeccion, analizarNumeracion, propuestaCompactar, propuestaCambio, renumerar, haversine, parseCoords, splitTable, parseMain, parseDefects, buildModel, asociarFotos, buildKml, leyendaFilas, distancias,
     parseKml, buildAnexo, anexoSheetXml, anexoWorkbookXml, anexoRichData, anexoContentTypes, anexoWorkbookRels, GRAVEDAD_DEFECTO, generarAnexoXlsx, normTipo, claseTipo, tieneCGP, salHex, salName, fmtMiles, pad2, upperEs, excelSerialToDate };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Core = api;
 })(typeof window !== 'undefined' ? window : globalThis);

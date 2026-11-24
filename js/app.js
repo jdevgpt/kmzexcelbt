@@ -1,7 +1,7 @@
 /* Interfaz de KMZ + ANEXO III Red BT */
 (function () {
   'use strict';
-  const APP_VERSION = '1.10.0';
+  const APP_VERSION = '1.11.0';
   const C = window.Core;
   const $ = id => document.getElementById(id);
   const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -331,25 +331,72 @@
   $('fotosPick').addEventListener('dblclick', e => { const b = e.target.closest('.fp-foto'); if (b && b.dataset.src) window.open(estado.miniaturas.get(b.dataset.src), '_blank'); });
 
 
-  // ── Comprobador de metros ──
+  // ── Comprobador de metros (+ ANEXO III solo desde el KMZ, con los metros reales de cada línea) ──
+  estado.metros = [];
+  function fechaGestcd(ct) {
+    try {
+      const k = String(ct).replace(/^0+(?=\d)/, '');
+      const g = JSON.parse(localStorage.getItem('gestcd_v1') || 'null');
+      const cs = ((g && g.centros) || []).filter(c => String(c.numero).replace(/^0+(?=\d)/, '') === k && c.fecha);
+      return cs.length ? cs[cs.length - 1].fecha : '';
+    } catch (e) { return ''; }
+  }
+  const isoADmy = iso => { const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})$/); return m ? `${m[3]}/${m[2]}/${m[1]}` : ''; };
   zonaDrop($('dropMetros'), $('fMetros'), async files => {
     files = files.filter(x => /\.(kmz|kml)$/i.test(x.name));
     if (!files.length) { alert('Elige archivos .kmz o .kml'); return; }
     const out = $('resMetros'); out.innerHTML = '<div class="info">Midiendo…</div>';
+    estado.metros = [];
     let h = '', suma = 0;
+    const m = v => C.fmtMiles(Math.round(v));
     for (const f of files) {
       try {
-        const { kml } = await leerKmz({ nombre: f.name, blob: f });
-        const r = C.medirKml(kml); suma += r.total;
-        const m = v => C.fmtMiles(Math.round(v));
+        const k = await leerKmz({ nombre: f.name, blob: f });
+        const r = C.medirKml(k.kml); suma += r.total;
+        let ct = ''; try { ct = C.tablaDesdeKmz(C.parseKml(k.kml), '').ct; } catch (e) {}
+        const i = estado.metros.push({ nombre: f.name, k, ct }) - 1;
         h += `<div class="res"><div class="ok-box"><b>${esc(f.name)}</b>: <b>${m(r.total)} m</b> de red en ${r.lineas} línea${r.lineas === 1 ? '' : 's'}${r.compartidas ? ` (${r.compartidas} de tramos compartidos)` : ''}</div>`;
         if (!r.lineas) h += '<div class="t-aviso">Este KMZ no tiene líneas.</div>';
         else h += `<table><tr><th>Carpeta / salida</th><th>Líneas</th><th>Metros</th></tr>${r.grupos.map(g => `<tr><td>${esc(g.carpeta)}</td><td>${g.lineas}${g.compartidas ? ` (${g.compartidas} compartidas)` : ''}</td><td>${m(g.metros)}</td></tr>`).join('')}<tr><th>Total</th><th>${r.lineas}</th><th>${m(r.total)}</th></tr></table>`;
+        if (ct) h += `<div class="fila m-anexo" data-i="${i}"><label style="display:flex;gap:6px;align-items:center"><input type="checkbox" class="m-sel"> ANEXO III de ${esc(ct)}</label>
+          <label style="display:flex;gap:6px;align-items:center">Fecha <input type="date" class="m-fecha" value="${esc(fechaGestcd(ct))}"></label></div>`;
         h += '</div>';
       } catch (e) { h += `<div class="res t-aviso">${esc(f.name)}: no lo puedo leer (${esc(e.message)})</div>`; }
     }
     if (files.length > 1) h += `<div class="ok-box">Suma de los ${files.length} KMZ: <b>${C.fmtMiles(Math.round(suma))} m</b></div>`;
+    if (estado.metros.some(x => x.ct)) h += `<div class="acciones"><button id="btnAnexoMetros">Generar ANEXO III de los marcados</button></div>
+      <p class="info">El ANEXO III se monta solo con el KMZ: apoyos, secciones, observaciones y defectos de sus popups, INICIO/FIN de las líneas y DIST. con los metros reales de cada línea dibujada. El total suma también las líneas de tramos compartidos. La foto de cada fila es la que elegiría la app (foto _1 del PT y 1ª foto del defecto más grave).</p><div id="resAnexoMetros"></div>`;
     out.innerHTML = h;
+  });
+  $('resMetros').addEventListener('click', async e => {
+    if (e.target.id !== 'btnAnexoMetros') return;
+    const sel = [...document.querySelectorAll('.m-anexo')].filter(d => d.querySelector('.m-sel').checked);
+    if (!sel.length) { alert('Marca los KMZ de los que quieres el ANEXO III.'); return; }
+    const sinFecha = sel.filter(d => !d.querySelector('.m-fecha').value);
+    if (sinFecha.length) { alert('Pon la fecha de la revisión de ' + sinFecha.map(d => estado.metros[+d.dataset.i].ct).join(', ') + ' (no va dentro del KMZ).'); sinFecha[0].querySelector('.m-fecha').focus(); return; }
+    const btn = e.target; btn.disabled = true; btn.textContent = 'Generando…';
+    let h = '';
+    for (const d of sel) {
+      const it = estado.metros[+d.dataset.i];
+      try {
+        const kd = C.parseKml(it.k.kml);
+        const t = C.tablaDesdeKmz(kd, isoADmy(d.querySelector('.m-fecha').value));
+        const mod = C.buildModel(t.rows, [], {});
+        const an = C.buildAnexo(mod, kd, { gravedad: $('txtGrav').value.split(/[\s,;]+/), metrosLinea: true });
+        an.extraTotal = t.compartidos;
+        const tpl = await JSZip.loadAsync(Uint8Array.from(atob(window.ANEXO_TEMPLATE_B64), c => c.charCodeAt(0)));
+        const gx = await C.generarAnexoXlsx(tpl, an, mod.ct, lectorImagenes(it.k.zip));
+        const blob = await tpl.generateAsync({ type: 'blob', compression: 'DEFLATE', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        const nombre = `ANEXO III - ${mod.ct}.xlsx`;
+        descargar(blob, nombre); await new Promise(r => setTimeout(r, 400));
+        const avisos = t.avisos.concat(mod.avisos, an.avisos, gx.avisos);
+        const tot = an.totalDist + Math.round(t.compartidos);
+        h += `<div class="ok-box">✔ <b>${esc(nombre)}</b>: ${an.filas.length} filas · total <b>${C.fmtMiles(tot)} m</b>${t.compartidos ? ` (${C.fmtMiles(an.totalDist)} m de tramos + ${C.fmtMiles(Math.round(t.compartidos))} m de líneas compartidas)` : ''}</div>` +
+          (avisos.length ? listaAvisos(avisos, 't-aviso') : '');
+      } catch (er) { h += `<div class="err-box">${esc(it.nombre)}: ${esc(er.message)}</div>`; }
+    }
+    $('resAnexoMetros').innerHTML = h;
+    btn.disabled = false; btn.textContent = 'Generar ANEXO III de los marcados';
   });
 
   async function leerKmz(k) {
