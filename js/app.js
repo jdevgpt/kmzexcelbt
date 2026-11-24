@@ -1,7 +1,7 @@
 /* Interfaz de KMZ + ANEXO III Red BT */
 (function () {
   'use strict';
-  const APP_VERSION = '1.9.1';
+  const APP_VERSION = '1.9.2';
   const C = window.Core;
   const $ = id => document.getElementById(id);
   const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -395,10 +395,10 @@
       $('res2').innerHTML = h;
       const pintarDoc = () => {
         const bol = esBoletin($('selProv').value);
-        $('tituloDoc').textContent = bol ? 'Boletín BT' : 'Informe BT';
-        $('btnInforme').textContent = bol ? 'Enviar al Boletín BT' : 'Enviar al Informe BT';
+        $('tituloDoc').textContent = bol ? 'Certificado de Revisión BT' : 'Informe BT';
+        $('btnInforme').textContent = bol ? 'Enviar al Certificado BT' : 'Enviar al Informe BT';
         $('infoDoc').textContent = bol
-          ? 'Abre la app de informes en modo Boletín BT (Málaga) con el centro relleno y el técnico de GestCD. Allí revisas dirección, población y técnico, pones la foto del ANEXO I y descargas Word + PDF.'
+          ? 'Abre la app de informes en modo Certificado de Revisión BT (Málaga) con el centro relleno y el técnico de GestCD. Allí revisas dirección, población y técnico, pones la foto del ANEXO I y descargas Word + PDF.'
           : 'Abre la app de informes con el centro relleno. Allí revisas dirección, población y provincia, pones la foto del ANEXO I y descargas Word + PDF.';
       };
       pintarDoc();
