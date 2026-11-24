@@ -1,7 +1,7 @@
 /* Interfaz de KMZ + ANEXO III Red BT */
 (function () {
   'use strict';
-  const APP_VERSION = '1.12.0';
+  const APP_VERSION = '1.13.0';
   const C = window.Core;
   const $ = id => document.getElementById(id);
   const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -365,7 +365,7 @@
     }
     if (files.length > 1) h += `<div class="ok-box">Suma de los ${files.length} KMZ: <b>${C.fmtMiles(Math.round(suma))} m</b></div>`;
     if (estado.metros.some(x => x.ct)) h += `<div class="acciones"><button id="btnAnexoMetros">Generar ANEXO III de los marcados</button></div>
-      <p class="info">El ANEXO III se monta solo con el KMZ: apoyos, secciones, observaciones y defectos de sus popups, INICIO/FIN de las líneas y DIST. con los metros reales de cada línea dibujada. En los tramos por los que van dos o más salidas (circuito doble) la DIST. lleva los metros de todas sus líneas, así que el total cuadra con el KMZ. La foto de cada fila es la que elegiría la app (foto _1 del PT y 1ª foto del defecto más grave).</p><div id="resAnexoMetros"></div>`;
+      <p class="info">El ANEXO III se monta solo con el KMZ: apoyos, secciones, observaciones y defectos de sus popups, INICIO/FIN de las líneas y DIST. con los metros reales de cada línea dibujada. En los tramos por los que van dos o más salidas (circuito doble) la DIST. lleva los metros de todas sus líneas, así que el total cuadra con el KMZ. Si una CGP/CPM está separada de su apoyo (cable grapado por la pared), su distancia se suma a la DIST. del apoyo: los metros de la línea si la dibujas del apoyo a la CGP, o en línea recta si no. La foto de cada fila es la que elegiría la app (foto _1 del PT y 1ª foto del defecto más grave).</p><div id="resAnexoMetros"></div>`;
     out.innerHTML = h; $('btnLimpiarMetros').hidden = false;
   });
   $('btnLimpiarMetros').addEventListener('click', () => { estado.metros = []; $('resMetros').innerHTML = ''; $('fMetros').value = ''; $('btnLimpiarMetros').hidden = true; });
@@ -393,7 +393,7 @@
         const avisos = t.avisos.concat(mod.avisos, an.avisos, gx.avisos);
         const tot = an.totalDist + Math.round(t.compartidos);
         const dobles = Object.keys(t.circuitos).length, medido = C.medirKml(it.k.kml).total;
-        h += `<div class="ok-box">✔ <b>${esc(nombre)}</b>: ${an.filas.length} filas · total <b>${C.fmtMiles(tot)} m</b> (KMZ: ${C.fmtMiles(Math.round(medido))} m)${dobles ? ` · ${dobles} tramo${dobles === 1 ? '' : 's'} con circuito doble o más, con sus metros multiplicados` : ''}</div>` +
+        h += `<div class="ok-box">✔ <b>${esc(nombre)}</b>: ${an.filas.length} filas · total <b>${C.fmtMiles(tot)} m</b> (KMZ: ${C.fmtMiles(Math.round(medido))} m de líneas${an.cgpRecta >= 0.5 ? ` + ${C.fmtMiles(Math.round(an.cgpRecta))} m de apoyos a CGP/CPM sin línea dibujada` : ''})${dobles ? ` · ${dobles} tramo${dobles === 1 ? '' : 's'} con circuito doble o más, con sus metros multiplicados` : ''}</div>` +
           (avisos.length ? listaAvisos(avisos, 't-aviso') : '');
       } catch (er) { h += `<div class="err-box">${esc(it.nombre)}: ${esc(er.message)}</div>`; }
     }

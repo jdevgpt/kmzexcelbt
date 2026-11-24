@@ -850,14 +850,17 @@
     const pt = ap.find(a => a.esPT);
     if (!pt) avisos.push('El KMZ no tiene el punto del PT/CT en APOYOS: los tramos que salen del PT no se pueden enlazar.');
     // CGP/CPM: marcador en CGP_CPM junto al apoyo → el TIPO lleva "CGP CPM"
-    kd.puntos.filter(p => p.carpeta === 'CGP_CPM').forEach(c => {
-      let best = null, bd = 3; ap.forEach(a => { const d = haversine(a.p, c); if (d < bd) { bd = d; best = a; } });
-      if (best && !/CGP|CPM/i.test(best.tipo)) best.tipo = (best.tipo + ' CGP CPM').trim();
+    const cgps = kd.puntos.filter(p => p.carpeta === 'CGP_CPM');
+    const listaAp = ap.map(a => ({ a, code: a.esPT ? a.ct + '000000' : a.code, punto: a.p, cgp: /CGP|CPM/i.test(a.tipo) }));
+    cgps.forEach(c => {
+      const x = apoyoDeCgp(c, listaAp); if (!x) return;
+      if (!/CGP|CPM/i.test(x.a.tipo)) x.a.tipo = (x.a.tipo + ' CGP CPM').trim();
     });
     // Aristas: líneas de SALIDAS que no son de tramos compartidos/recorridos
     const porCode = new Map(ap.filter(a => a.code).map(a => [a.code, a]));
     const cerca = q => { let best = null, bd = 4; ap.forEach(a => { const d = haversine(a.p, q); if (d < bd) { bd = d; best = a; } }); return best; };
-    const lineas = kd.lineas.filter(l => (l.carpeta === 'SALIDAS' || !kd.lineas.some(x => x.carpeta === 'SALIDAS')) && !/\((compartido|recorrido)/i.test(l.name));
+    const aCgp = l => cgps.some(c => haversine(l.ini, c) < 4 || haversine(l.fin, c) < 4) && !(cerca(l.ini) && cerca(l.fin) && haversine(l.ini, l.fin) > 4);
+    const lineas = kd.lineas.filter(l => (l.carpeta === 'SALIDAS' || !kd.lineas.some(x => x.carpeta === 'SALIDAS')) && !/\((compartido|recorrido)/i.test(l.name) && !aCgp(l));
     const lineasComp = kd.lineas.filter(l => /\((compartido|recorrido)/i.test(l.name));
     const aristas = [];
     lineas.forEach(l => {
@@ -903,6 +906,17 @@
       a.esPT ? '0' : (a.padre ? (a.padre.esPT ? '0' : a.padre.apoyo) : ''), a.esPT ? '0' : (a.padre ? a.apoyo : ''),
       a.seccion, '', a.obs, '', '', `${a.p.lat}, ${a.p.lon}`]);
     return { rows, avisos, compartidos, circuitos, ct: pt ? pt.ct : (ap[0] && ap[0].ct) || '' };
+  }
+
+
+  // Apoyo al que pertenece un marcador de CGP_CPM: por el código del apoyo en su popup (nombre de la foto)
+  // o, si no lo lleva, el apoyo más cercano (hasta 40 m; mejor uno con CGP/CPM).
+  function apoyoDeCgp(c, lista) { // lista: [{ code, punto, cgp }]
+    const codes = (c.desc || '').match(/\d{11}/g) || [];
+    for (const k of codes) { const x = lista.find(a => a.code === k); if (x) return x; }
+    let best = null, bd = 40;
+    lista.forEach(a => { if (!a.punto) return; const d = haversine(a.punto, c) - (a.cgp ? 5 : 0); if (d < bd) { bd = d; best = a; } });
+    return best;
   }
 
   // Punto del KMZ (carpeta APOYOS) que corresponde a cada nodo de la tabla
@@ -971,6 +985,20 @@
         if (!ok) resumen.push(`La línea ${t.a.name} → ${t.b.name} no llega exactamente a la posición de los apoyos en el KMZ (¿apoyo movido sin mover la línea?). DIST. se calcula entre apoyos.`);
       }
     });
+    // CGP/CPM separadas del apoyo (cable grapado por la pared): su distancia va en la DIST. del apoyo.
+    // Si hay una línea dibujada del apoyo a la CGP se usan sus metros; si no, la distancia en línea recta.
+    const cgpExtra = new Map(); let cgpRecta = 0;
+    const listaCgp = model.nodes.filter(n => pos(n)).map(n => ({ n, code: n.esPT ? n.ct + '000000' : n.code, punto: pos(n), cgp: n.cgp }));
+    kd.puntos.filter(p => p.carpeta === 'CGP_CPM').forEach(c => {
+      const a = apoyoDeCgp(c, listaCgp);
+      if (!a) { avisos.push(`Marcador de CGP/CPM sin apoyo cercano (más de 40 m): no se mide.`); return; }
+      const P = a.punto; let d = haversine(P, c), conLinea = false;
+      const L = kd.lineas.findIndex((l, i) => !usadas.has(i) && ((haversine(l.ini, P) < 4 && haversine(l.fin, c) < 4) || (haversine(l.fin, P) < 4 && haversine(l.ini, c) < 4)));
+      if (L >= 0 && d >= 1) { usadas.add(L); d = kd.lineas[L].largo; conLinea = true; }
+      if (d < 1) return; // CGP en el mismo apoyo
+      cgpExtra.set(a.n, (cgpExtra.get(a.n) || 0) + d); if (!conLinea) cgpRecta += d;
+      resumen.push(`Apoyo ${a.n.esPT ? a.n.name : a.n.apoyo}: CGP/CPM a ${Math.round(d)} m${conLinea ? ' (línea dibujada)' : ''}, sumados a su DIST.`);
+    });
     kd.lineas.forEach((l, i) => { if (!usadas.has(i) && !/\((compartido|recorrido)/i.test(l.name)) avisos.push(`Topología: la línea "${l.name}" del KMZ no corresponde a ningún tramo INICIO/FIN de la tabla.`); });
 
     // Defectos desde las carpetas ZOBX y DEFECTOS del KMZ
@@ -1026,6 +1054,8 @@
           dist = d; // se redondea al final, de forma que la suma cuadre con el total sin decimales
         }
       }
+      const exCgp = r === n.row ? cgpExtra.get(n) : 0;
+      if (exCgp) dist = (dist === '' ? 0 : dist) + exCgp;
       // Observaciones: las del popup del KMZ si el apoyo está (pueden haberse corregido)
       let obs = trim(r.obs);
       if (p) {
@@ -1089,7 +1119,7 @@
     });
     const isoDe = f => { const m = trim(f).match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/); if (!m) return ''; const y = m[3].length === 2 ? '20' + m[3] : m[3]; return `${y}-${pad2(+m[2])}-${pad2(+m[1])}`; };
     const fechaInforme = model.filas.map(r => isoDe(r.fecha)).filter(Boolean).sort().pop() || '';
-    return { filas, avisos, resumen, totalDist, fuenteDef, informe: { centro: model.ct, fecha: fechaInforme, defectos: defectosInforme } };
+    return { filas, avisos, resumen, totalDist, cgpRecta, fuenteDef, informe: { centro: model.ct, fecha: fechaInforme, defectos: defectosInforme } };
   }
 
   // ───────────────────────── imágenes dentro de celda (como el ANEXO III real) ─────────────────────────
