@@ -1,7 +1,7 @@
 /* Interfaz de KMZ + ANEXO III Red BT */
 (function () {
   'use strict';
-  const APP_VERSION = '1.11.0';
+  const APP_VERSION = '1.11.1';
   const C = window.Core;
   const $ = id => document.getElementById(id);
   const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -366,8 +366,9 @@
     if (files.length > 1) h += `<div class="ok-box">Suma de los ${files.length} KMZ: <b>${C.fmtMiles(Math.round(suma))} m</b></div>`;
     if (estado.metros.some(x => x.ct)) h += `<div class="acciones"><button id="btnAnexoMetros">Generar ANEXO III de los marcados</button></div>
       <p class="info">El ANEXO III se monta solo con el KMZ: apoyos, secciones, observaciones y defectos de sus popups, INICIO/FIN de las líneas y DIST. con los metros reales de cada línea dibujada. El total suma también las líneas de tramos compartidos. La foto de cada fila es la que elegiría la app (foto _1 del PT y 1ª foto del defecto más grave).</p><div id="resAnexoMetros"></div>`;
-    out.innerHTML = h;
+    out.innerHTML = h; $('btnLimpiarMetros').hidden = false;
   });
+  $('btnLimpiarMetros').addEventListener('click', () => { estado.metros = []; $('resMetros').innerHTML = ''; $('fMetros').value = ''; $('btnLimpiarMetros').hidden = true; });
   $('resMetros').addEventListener('click', async e => {
     if (e.target.id !== 'btnAnexoMetros') return;
     const sel = [...document.querySelectorAll('.m-anexo')].filter(d => d.querySelector('.m-sel').checked);
