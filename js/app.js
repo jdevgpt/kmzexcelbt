@@ -1,7 +1,7 @@
 /* Interfaz de KMZ + ANEXO III Red BT */
 (function () {
   'use strict';
-  const APP_VERSION = '1.9.3';
+  const APP_VERSION = '1.10.0';
   const C = window.Core;
   const $ = id => document.getElementById(id);
   const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -329,6 +329,28 @@
     fila.querySelectorAll('.fp-foto').forEach(x => x.classList.toggle('on', x === b));
   });
   $('fotosPick').addEventListener('dblclick', e => { const b = e.target.closest('.fp-foto'); if (b && b.dataset.src) window.open(estado.miniaturas.get(b.dataset.src), '_blank'); });
+
+
+  // ── Comprobador de metros ──
+  zonaDrop($('dropMetros'), $('fMetros'), async files => {
+    files = files.filter(x => /\.(kmz|kml)$/i.test(x.name));
+    if (!files.length) { alert('Elige archivos .kmz o .kml'); return; }
+    const out = $('resMetros'); out.innerHTML = '<div class="info">Midiendo…</div>';
+    let h = '', suma = 0;
+    for (const f of files) {
+      try {
+        const { kml } = await leerKmz({ nombre: f.name, blob: f });
+        const r = C.medirKml(kml); suma += r.total;
+        const m = v => C.fmtMiles(Math.round(v));
+        h += `<div class="res"><div class="ok-box"><b>${esc(f.name)}</b>: <b>${m(r.total)} m</b> de red en ${r.lineas} línea${r.lineas === 1 ? '' : 's'}${r.compartidas ? ` (${r.compartidas} de tramos compartidos)` : ''}</div>`;
+        if (!r.lineas) h += '<div class="t-aviso">Este KMZ no tiene líneas.</div>';
+        else h += `<table><tr><th>Carpeta / salida</th><th>Líneas</th><th>Metros</th></tr>${r.grupos.map(g => `<tr><td>${esc(g.carpeta)}</td><td>${g.lineas}${g.compartidas ? ` (${g.compartidas} compartidas)` : ''}</td><td>${m(g.metros)}</td></tr>`).join('')}<tr><th>Total</th><th>${r.lineas}</th><th>${m(r.total)}</th></tr></table>`;
+        h += '</div>';
+      } catch (e) { h += `<div class="res t-aviso">${esc(f.name)}: no lo puedo leer (${esc(e.message)})</div>`; }
+    }
+    if (files.length > 1) h += `<div class="ok-box">Suma de los ${files.length} KMZ: <b>${C.fmtMiles(Math.round(suma))} m</b></div>`;
+    out.innerHTML = h;
+  });
 
   async function leerKmz(k) {
     if (/\.kml$/i.test(k.nombre)) return { kml: await k.blob.text(), zip: null };

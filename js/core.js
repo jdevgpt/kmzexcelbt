@@ -786,6 +786,39 @@
     return { puntos, lineas };
   }
 
+
+  // Comprobador de metros: mide todas las líneas de cualquier KMZ/KML, agrupadas por la carpeta en la que están.
+  // Cada línea dibujada cuenta entera, así que un tramo compartido por dos salidas (dos líneas paralelas) cuenta dos veces.
+  function medirKml(kml) {
+    const grupos = new Map(); let total = 0, n = 0, compartidas = 0;
+    const re = /<Folder\b[^>]*>|<\/Folder>|<Document\b[^>]*>|<\/Document>|<Placemark\b[^>]*>([\s\S]*?)<\/Placemark>/g; let m;
+    const stack = [];
+    const num = s => s.trim().split(/\s+/).map(t => t.split(',').map(Number)).filter(p => p.length >= 2 && isFinite(p[0]) && isFinite(p[1])).map(p => ({ lat: p[1], lon: p[0] }));
+    while ((m = re.exec(kml))) {
+      if (/^<(Folder|Document)\b/.test(m[0])) {
+        let rest = kml.slice(re.lastIndex, re.lastIndex + 3000);
+        const cut = rest.search(/<Placemark\b|<Folder\b/); if (cut >= 0) rest = rest.slice(0, cut);
+        const nm = rest.match(/<name>([\s\S]*?)<\/name>/);
+        stack.push(nm ? textoDe(nm[1]).trim() : '');
+        continue;
+      }
+      if (m[0] === '</Folder>' || m[0] === '</Document>') { stack.pop(); continue; }
+      const body = m[1];
+      const ls = [...body.matchAll(/<LineString>[\s\S]*?<coordinates>([\s\S]*?)<\/coordinates>/g)];
+      if (!ls.length) continue;
+      const nm = body.match(/<name>([\s\S]*?)<\/name>/);
+      const name = nm ? textoDe(nm[1]).trim() : '';
+      let d = 0;
+      ls.forEach(x => { const ps = num(x[1]); for (let i = 1; i < ps.length; i++) d += haversine(ps[i - 1], ps[i]); });
+      const carpeta = stack.length > 1 ? stack[stack.length - 1] || '(sin carpeta)' : '(sin carpeta)';
+      const g = grupos.get(carpeta) || { carpeta, metros: 0, lineas: 0, compartidas: 0 };
+      const comp = /compartid/i.test(name);
+      g.metros += d; g.lineas++; if (comp) { g.compartidas++; compartidas++; }
+      grupos.set(carpeta, g); total += d; n++;
+    }
+    return { grupos: [...grupos.values()], total, lineas: n, compartidas };
+  }
+
   // Punto del KMZ (carpeta APOYOS) que corresponde a cada nodo de la tabla
   function puntosDesdeKmz(model, kd) {
     const avisos = [];
@@ -1069,7 +1102,7 @@
     return { avisos, nFotos: imgs.length };
   }
 
-  const api = { numeracionSeguida, SECCIONES, filasSecciones, editarTabla, normSeccion, analizarNumeracion, propuestaCompactar, propuestaCambio, renumerar, haversine, parseCoords, splitTable, parseMain, parseDefects, buildModel, asociarFotos, buildKml, leyendaFilas, distancias,
+  const api = { medirKml, numeracionSeguida, SECCIONES, filasSecciones, editarTabla, normSeccion, analizarNumeracion, propuestaCompactar, propuestaCambio, renumerar, haversine, parseCoords, splitTable, parseMain, parseDefects, buildModel, asociarFotos, buildKml, leyendaFilas, distancias,
     parseKml, buildAnexo, anexoSheetXml, anexoWorkbookXml, anexoRichData, anexoContentTypes, anexoWorkbookRels, GRAVEDAD_DEFECTO, generarAnexoXlsx, normTipo, claseTipo, tieneCGP, salHex, salName, fmtMiles, pad2, upperEs, excelSerialToDate };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Core = api;
 })(typeof window !== 'undefined' ? window : globalThis);
