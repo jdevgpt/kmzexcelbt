@@ -1,7 +1,7 @@
 /* Interfaz de KMZ + ANEXO III Red BT */
 (function () {
   'use strict';
-  const APP_VERSION = '1.13.0';
+  const APP_VERSION = '1.13.1';
   const C = window.Core;
   const $ = id => document.getElementById(id);
   const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
